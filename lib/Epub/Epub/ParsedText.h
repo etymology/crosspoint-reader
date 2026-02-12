@@ -3,7 +3,6 @@
 #include <EpdFontFamily.h>
 
 #include <functional>
-#include <list>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,8 +12,8 @@
 class GfxRenderer;
 
 class ParsedText {
-  std::list<std::string> words;
-  std::list<EpdFontFamily::Style> wordStyles;
+  std::vector<std::string> words;
+  std::vector<EpdFontFamily::Style> wordStyles;
   TextBlock::Style style;
   bool extraParagraphSpacing;
   bool hyphenationEnabled;

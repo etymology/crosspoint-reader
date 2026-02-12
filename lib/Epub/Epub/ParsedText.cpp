@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -82,6 +81,13 @@ void ParsedText::layoutAndExtractLines(const GfxRenderer& renderer, const int fo
   for (size_t i = 0; i < lineCount; ++i) {
     extractLine(i, pageWidth, spaceWidth, wordWidths, lineBreakIndices, processLine);
   }
+
+  // Erase consumed words (those up to the last extracted line)
+  if (lineCount > 0) {
+    const size_t consumed = lineBreakIndices[lineCount - 1];
+    words.erase(words.begin(), words.begin() + consumed);
+    wordStyles.erase(wordStyles.begin(), wordStyles.begin() + consumed);
+  }
 }
 
 std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& renderer, const int fontId) {
@@ -90,14 +96,8 @@ std::vector<uint16_t> ParsedText::calculateWordWidths(const GfxRenderer& rendere
   std::vector<uint16_t> wordWidths;
   wordWidths.reserve(totalWordCount);
 
-  auto wordsIt = words.begin();
-  auto wordStylesIt = wordStyles.begin();
-
-  while (wordsIt != words.end()) {
-    wordWidths.push_back(measureWordWidth(renderer, fontId, *wordsIt, *wordStylesIt));
-
-    std::advance(wordsIt, 1);
-    std::advance(wordStylesIt, 1);
+  for (size_t i = 0; i < totalWordCount; ++i) {
+    wordWidths.push_back(measureWordWidth(renderer, fontId, words[i], wordStyles[i]));
   }
 
   return wordWidths;
@@ -265,14 +265,8 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     return false;
   }
 
-  // Get iterators to target word and style.
-  auto wordIt = words.begin();
-  auto styleIt = wordStyles.begin();
-  std::advance(wordIt, wordIndex);
-  std::advance(styleIt, wordIndex);
-
-  const std::string& word = *wordIt;
-  const auto style = *styleIt;
+  const std::string& word = words[wordIndex];
+  const auto wordStyle = wordStyles[wordIndex];
 
   // Collect candidate breakpoints (byte offsets and hyphen requirements).
   auto breakInfos = Hyphenator::breakOffsets(word, allowFallbackBreaks);
@@ -292,7 +286,7 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
     }
 
     const bool needsHyphen = info.requiresInsertedHyphen;
-    const int prefixWidth = measureWordWidth(renderer, fontId, word.substr(0, offset), style, needsHyphen);
+    const int prefixWidth = measureWordWidth(renderer, fontId, word.substr(0, offset), wordStyle, needsHyphen);
     if (prefixWidth > availableWidth || prefixWidth <= chosenWidth) {
       continue;  // Skip if too wide or not an improvement
     }
@@ -309,20 +303,18 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
 
   // Split the word at the selected breakpoint and append a hyphen if required.
   std::string remainder = word.substr(chosenOffset);
-  wordIt->resize(chosenOffset);
+  words[wordIndex].resize(chosenOffset);
   if (chosenNeedsHyphen) {
-    wordIt->push_back('-');
+    words[wordIndex].push_back('-');
   }
 
   // Insert the remainder word (with matching style) directly after the prefix.
-  auto insertWordIt = std::next(wordIt);
-  auto insertStyleIt = std::next(styleIt);
-  words.insert(insertWordIt, remainder);
-  wordStyles.insert(insertStyleIt, style);
+  words.insert(words.begin() + wordIndex + 1, std::move(remainder));
+  wordStyles.insert(wordStyles.begin() + wordIndex + 1, wordStyle);
 
   // Update cached widths to reflect the new prefix/remainder pairing.
   wordWidths[wordIndex] = static_cast<uint16_t>(chosenWidth);
-  const uint16_t remainderWidth = measureWordWidth(renderer, fontId, remainder, style);
+  const uint16_t remainderWidth = measureWordWidth(renderer, fontId, words[wordIndex + 1], wordStyle);
   wordWidths.insert(wordWidths.begin() + wordIndex + 1, remainderWidth);
   return true;
 }
@@ -358,30 +350,24 @@ void ParsedText::extractLine(const size_t breakIndex, const int pageWidth, const
     xpos = (spareSpace - (lineWordCount - 1) * spaceWidth) / 2;
   }
 
-  // Pre-calculate X positions for words
-  std::list<uint16_t> lineXPos;
+  // Pre-calculate X positions and build line data using direct indexing
+  std::vector<uint16_t> lineXPos;
+  lineXPos.reserve(lineWordCount);
+  std::vector<std::string> lineWords;
+  lineWords.reserve(lineWordCount);
+  std::vector<EpdFontFamily::Style> lineWordStyles;
+  lineWordStyles.reserve(lineWordCount);
+
   for (size_t i = lastBreakAt; i < lineBreak; i++) {
-    const uint16_t currentWordWidth = wordWidths[i];
     lineXPos.push_back(xpos);
-    xpos += currentWordWidth + spacing;
-  }
+    xpos += wordWidths[i] + spacing;
 
-  // Iterators always start at the beginning as we are moving content with splice below
-  auto wordEndIt = words.begin();
-  auto wordStyleEndIt = wordStyles.begin();
-  std::advance(wordEndIt, lineWordCount);
-  std::advance(wordStyleEndIt, lineWordCount);
-
-  // *** CRITICAL STEP: CONSUME DATA USING SPLICE ***
-  std::list<std::string> lineWords;
-  lineWords.splice(lineWords.begin(), words, words.begin(), wordEndIt);
-  std::list<EpdFontFamily::Style> lineWordStyles;
-  lineWordStyles.splice(lineWordStyles.begin(), wordStyles, wordStyles.begin(), wordStyleEndIt);
-
-  for (auto& word : lineWords) {
+    std::string word = std::move(words[i]);
     if (containsSoftHyphen(word)) {
       stripSoftHyphensInPlace(word);
     }
+    lineWords.push_back(std::move(word));
+    lineWordStyles.push_back(wordStyles[i]);
   }
 
   processLine(std::make_shared<TextBlock>(std::move(lineWords), std::move(lineXPos), std::move(lineWordStyles), style));

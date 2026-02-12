@@ -125,7 +125,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
                                 const uint16_t viewportHeight, const bool hyphenationEnabled,
                                 const std::function<void()>& progressSetupFn,
                                 const std::function<void(int)>& progressFn) {
-  constexpr uint32_t MIN_SIZE_FOR_PROGRESS = 50 * 1024;  // 50KB
+  constexpr uint32_t MIN_SIZE_FOR_PROGRESS = 150 * 1024;  // 150KB
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
 
