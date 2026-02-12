@@ -38,7 +38,6 @@ class TxtReaderActivity final : public ActivityWithSubactivity {
   uint8_t cachedParagraphAlignment = CrossPointSettings::LEFT_ALIGN;
 
   static void taskTrampoline(void* param);
-  [[noreturn]] void displayTaskLoop();
   void renderScreen();
   void renderPage();
   void renderStatusBar(int orientedMarginRight, int orientedMarginBottom, int orientedMarginLeft) const;

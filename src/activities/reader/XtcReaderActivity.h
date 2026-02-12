@@ -28,7 +28,6 @@ class XtcReaderActivity final : public ActivityWithSubactivity {
   const std::function<void()> onGoHome;
 
   static void taskTrampoline(void* param);
-  [[noreturn]] void displayTaskLoop();
   void renderScreen();
   void renderPage();
   void saveProgress() const;

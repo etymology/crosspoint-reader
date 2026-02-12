@@ -9,6 +9,7 @@
 #include "MappedInputManager.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
 
 namespace {
 void syncTimeWithNTP() {
@@ -40,7 +41,7 @@ void syncTimeWithNTP() {
 
 void KOReaderSyncActivity::taskTrampoline(void* param) {
   auto* self = static_cast<KOReaderSyncActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(self->updateRequired, self->renderingMutex, [self] { self->render(); });
 }
 
 void KOReaderSyncActivity::onWifiSelectionComplete(const bool success) {
@@ -230,25 +231,7 @@ void KOReaderSyncActivity::onExit() {
   delay(100);
 
   // Wait until not rendering to delete task
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
-}
-
-void KOReaderSyncActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      render();
-      xSemaphoreGive(renderingMutex);
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
-  }
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
 }
 
 void KOReaderSyncActivity::render() {

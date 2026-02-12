@@ -12,6 +12,7 @@
 #include "activities/network/WifiSelectionActivity.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "util/ListNavigation.h"
 #include "util/StringUtils.h"
 #include "util/UrlUtils.h"
 
@@ -141,16 +142,17 @@ void OpdsBookBrowserActivity::loop() {
                                 mappedInput.wasReleased(MappedInputManager::Button::Right);
     longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
 
+    const int entryCount = static_cast<int>(entries.size());
     auto result =
         longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
                               SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
     if (result.mediumPrev) {
-      selectorIndex = ((selectorIndex / PAGE_ITEMS - 1) * PAGE_ITEMS + entries.size()) % entries.size();
+      selectorIndex = ListNavigation::prevPage(selectorIndex, PAGE_ITEMS, entryCount);
       updateRequired = true;
       return;
     }
     if (result.mediumNext) {
-      selectorIndex = ((selectorIndex / PAGE_ITEMS + 1) * PAGE_ITEMS) % entries.size();
+      selectorIndex = ListNavigation::nextPage(selectorIndex, PAGE_ITEMS, entryCount);
       updateRequired = true;
       return;
     }
@@ -174,18 +176,12 @@ void OpdsBookBrowserActivity::loop() {
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       navigateBack();
     } else if (prevReleased && !entries.empty()) {
-      if (skipPage) {
-        selectorIndex = ((selectorIndex / PAGE_ITEMS - 1) * PAGE_ITEMS + entries.size()) % entries.size();
-      } else {
-        selectorIndex = (selectorIndex + entries.size() - 1) % entries.size();
-      }
+      selectorIndex = skipPage ? ListNavigation::prevPage(selectorIndex, PAGE_ITEMS, entryCount)
+                               : ListNavigation::prevItem(selectorIndex, entryCount);
       updateRequired = true;
     } else if (nextReleased && !entries.empty()) {
-      if (skipPage) {
-        selectorIndex = ((selectorIndex / PAGE_ITEMS + 1) * PAGE_ITEMS) % entries.size();
-      } else {
-        selectorIndex = (selectorIndex + 1) % entries.size();
-      }
+      selectorIndex = skipPage ? ListNavigation::nextPage(selectorIndex, PAGE_ITEMS, entryCount)
+                               : ListNavigation::nextItem(selectorIndex, entryCount);
       updateRequired = true;
     }
   }

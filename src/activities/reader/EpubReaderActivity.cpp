@@ -12,6 +12,7 @@
 #include "RecentBooksStore.h"
 #include "ScreenComponents.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
@@ -20,7 +21,9 @@ constexpr int statusBarMargin = 19;
 
 void EpubReaderActivity::taskTrampoline(void* param) {
   auto* self = static_cast<EpubReaderActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(
+      self->updateRequired, self->renderingMutex, [self] { self->renderScreen(); },
+      [self] { self->longPressHandler.onRenderComplete(); });
 }
 
 void EpubReaderActivity::onEnter() {
@@ -96,13 +99,7 @@ void EpubReaderActivity::onExit() {
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
   // Wait until not rendering to delete task to avoid killing mid-instruction to EPD
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
   section.reset();
   epub.reset();
 }
@@ -265,20 +262,6 @@ void EpubReaderActivity::loop() {
       xSemaphoreGive(renderingMutex);
     }
     updateRequired = true;
-  }
-}
-
-void EpubReaderActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      renderScreen();
-      xSemaphoreGive(renderingMutex);
-      // If a repeating long-press action requested re-arming after render, do it now
-      longPressHandler.onRenderComplete();
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 

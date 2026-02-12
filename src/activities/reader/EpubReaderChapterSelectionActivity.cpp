@@ -7,6 +7,8 @@
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
+#include "util/ListNavigation.h"
 
 namespace {
 // Time threshold for treating a long press as a page-up/page-down now derived from settings
@@ -52,7 +54,9 @@ int EpubReaderChapterSelectionActivity::getPageItems() const {
 
 void EpubReaderChapterSelectionActivity::taskTrampoline(void* param) {
   auto* self = static_cast<EpubReaderChapterSelectionActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(
+      self->updateRequired, self->renderingMutex, [self] { self->renderScreen(); },
+      [self] { self->longPressHandler.onRenderComplete(); }, [self] { return !self->subActivity; });
 }
 
 void EpubReaderChapterSelectionActivity::onEnter() {
@@ -86,13 +90,7 @@ void EpubReaderChapterSelectionActivity::onExit() {
   ActivityWithSubactivity::onExit();
 
   // Wait until not rendering to delete task to avoid killing mid-instruction to EPD
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
 }
 
 void EpubReaderChapterSelectionActivity::launchSyncActivity() {
@@ -147,12 +145,12 @@ void EpubReaderChapterSelectionActivity::loop() {
   auto result = longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
                                       SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
   if (result.mediumPrev) {
-    selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + totalItems) % totalItems;
+    selectorIndex = ListNavigation::prevPage(selectorIndex, pageItems, totalItems);
     updateRequired = true;
     return;
   }
   if (result.mediumNext) {
-    selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % totalItems;
+    selectorIndex = ListNavigation::nextPage(selectorIndex, pageItems, totalItems);
     updateRequired = true;
     return;
   }
@@ -182,32 +180,13 @@ void EpubReaderChapterSelectionActivity::loop() {
   } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
     onGoBack();
   } else if (prevReleased) {
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + totalItems) % totalItems;
-    } else {
-      selectorIndex = (selectorIndex + totalItems - 1) % totalItems;
-    }
+    selectorIndex = skipPage ? ListNavigation::prevPage(selectorIndex, pageItems, totalItems)
+                             : ListNavigation::prevItem(selectorIndex, totalItems);
     updateRequired = true;
   } else if (nextReleased) {
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % totalItems;
-    } else {
-      selectorIndex = (selectorIndex + 1) % totalItems;
-    }
+    selectorIndex = skipPage ? ListNavigation::nextPage(selectorIndex, pageItems, totalItems)
+                             : ListNavigation::nextItem(selectorIndex, totalItems);
     updateRequired = true;
-  }
-}
-
-void EpubReaderChapterSelectionActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired && !subActivity) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      renderScreen();
-      xSemaphoreGive(renderingMutex);
-      longPressHandler.onRenderComplete();
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 

@@ -93,6 +93,5 @@ class KOReaderSyncActivity final : public ActivityWithSubactivity {
   void performUpload();
 
   static void taskTrampoline(void* param);
-  [[noreturn]] void displayTaskLoop();
   void render();
 };

@@ -10,6 +10,7 @@
 #include "RecentBooksStore.h"
 #include "ScreenComponents.h"
 #include "fontIds.h"
+#include "util/ListNavigation.h"
 #include "util/StringUtils.h"
 
 namespace {
@@ -300,12 +301,12 @@ void MyLibraryActivity::loop() {
   auto result = longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
                                       SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
   if (result.mediumPrev) {
-    selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + itemCount) % itemCount;
+    selectorIndex = ListNavigation::prevPage(selectorIndex, pageItems, itemCount);
     updateRequired = true;
     return;
   }
   if (result.mediumNext) {
-    selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % itemCount;
+    selectorIndex = ListNavigation::nextPage(selectorIndex, pageItems, itemCount);
     updateRequired = true;
     return;
   }
@@ -408,18 +409,12 @@ void MyLibraryActivity::loop() {
   const bool nextReleased = downReleased;
 
   if (prevReleased && itemCount > 0) {
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + itemCount) % itemCount;
-    } else {
-      selectorIndex = (selectorIndex + itemCount - 1) % itemCount;
-    }
+    selectorIndex = skipPage ? ListNavigation::prevPage(selectorIndex, pageItems, itemCount)
+                             : ListNavigation::prevItem(selectorIndex, itemCount);
     updateRequired = true;
   } else if (nextReleased && itemCount > 0) {
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % itemCount;
-    } else {
-      selectorIndex = (selectorIndex + 1) % itemCount;
-    }
+    selectorIndex = skipPage ? ListNavigation::nextPage(selectorIndex, pageItems, itemCount)
+                             : ListNavigation::nextItem(selectorIndex, itemCount);
     updateRequired = true;
   }
 }

@@ -42,7 +42,6 @@ class EpubReaderChapterSelectionActivity final : public ActivityWithSubactivity 
     int tocIndexFromItemIndex(int itemIndex) const;
 
     static void taskTrampoline(void* param);
-    [[noreturn]] void displayTaskLoop();
     void renderScreen();
     void launchSyncActivity();
 

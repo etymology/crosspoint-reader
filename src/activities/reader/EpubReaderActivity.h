@@ -23,7 +23,6 @@ class EpubReaderActivity final : public ActivityWithSubactivity {
   const std::function<void()> onGoHome;
 
   static void taskTrampoline(void* param);
-  [[noreturn]] void displayTaskLoop();
   void renderScreen();
   void renderContents(std::unique_ptr<Page> page, int orientedMarginTop, int orientedMarginRight,
                       int orientedMarginBottom, int orientedMarginLeft);

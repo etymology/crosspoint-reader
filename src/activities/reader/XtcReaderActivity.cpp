@@ -17,6 +17,7 @@
 #include "RecentBooksStore.h"
 #include "XtcReaderChapterSelectionActivity.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
 
 namespace {
 // thresholds now come from SETTINGS.getLongPressMs() and getMediumPressMs()
@@ -24,7 +25,9 @@ namespace {
 
 void XtcReaderActivity::taskTrampoline(void* param) {
   auto* self = static_cast<XtcReaderActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(
+      self->updateRequired, self->renderingMutex, [self] { self->renderScreen(); },
+      [self] { self->longPressHandler.onRenderComplete(); });
 }
 
 void XtcReaderActivity::onEnter() {
@@ -61,13 +64,7 @@ void XtcReaderActivity::onExit() {
   ActivityWithSubactivity::onExit();
 
   // Wait until not rendering to delete task
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
   xtc.reset();
 }
 
@@ -196,19 +193,6 @@ void XtcReaderActivity::loop() {
       currentPage = xtc->getPageCount();  // Allow showing "End of book"
     }
     updateRequired = true;
-  }
-}
-
-void XtcReaderActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      renderScreen();
-      xSemaphoreGive(renderingMutex);
-      longPressHandler.onRenderComplete();
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 

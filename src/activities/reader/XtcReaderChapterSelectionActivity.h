@@ -25,7 +25,6 @@ class XtcReaderChapterSelectionActivity final : public Activity {
   int findChapterIndexForPage(uint32_t page) const;
 
   static void taskTrampoline(void* param);
-  [[noreturn]] void displayTaskLoop();
   void renderScreen();
 
  public:

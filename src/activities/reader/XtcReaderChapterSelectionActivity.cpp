@@ -5,6 +5,8 @@
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
+#include "util/ListNavigation.h"
 
 namespace {
 // skip-page threshold derived from settings
@@ -41,7 +43,9 @@ int XtcReaderChapterSelectionActivity::findChapterIndexForPage(uint32_t page) co
 
 void XtcReaderChapterSelectionActivity::taskTrampoline(void* param) {
   auto* self = static_cast<XtcReaderChapterSelectionActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(
+      self->updateRequired, self->renderingMutex, [self] { self->renderScreen(); },
+      [self] { self->longPressHandler.onRenderComplete(); });
 }
 
 void XtcReaderChapterSelectionActivity::onEnter() {
@@ -66,13 +70,7 @@ void XtcReaderChapterSelectionActivity::onEnter() {
 void XtcReaderChapterSelectionActivity::onExit() {
   Activity::onExit();
 
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
 }
 
 void XtcReaderChapterSelectionActivity::loop() {
@@ -105,14 +103,14 @@ void XtcReaderChapterSelectionActivity::loop() {
                                       SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
   if (result.mediumPrev) {
     if (total > 0) {
-      selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + total) % total;
+      selectorIndex = ListNavigation::prevPage(selectorIndex, pageItems, total);
       updateRequired = true;
     }
     return;
   }
   if (result.mediumNext) {
     if (total > 0) {
-      selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % total;
+      selectorIndex = ListNavigation::nextPage(selectorIndex, pageItems, total);
       updateRequired = true;
     }
     return;
@@ -137,36 +135,17 @@ void XtcReaderChapterSelectionActivity::loop() {
     if (total == 0) {
       return;
     }
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + total) % total;
-    } else {
-      selectorIndex = (selectorIndex + total - 1) % total;
-    }
+    selectorIndex = skipPage ? ListNavigation::prevPage(selectorIndex, pageItems, total)
+                             : ListNavigation::prevItem(selectorIndex, total);
     updateRequired = true;
   } else if (nextReleased) {
     const int total = static_cast<int>(xtc->getChapters().size());
     if (total == 0) {
       return;
     }
-    if (skipPage) {
-      selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % total;
-    } else {
-      selectorIndex = (selectorIndex + 1) % total;
-    }
+    selectorIndex = skipPage ? ListNavigation::nextPage(selectorIndex, pageItems, total)
+                             : ListNavigation::nextItem(selectorIndex, total);
     updateRequired = true;
-  }
-}
-
-void XtcReaderChapterSelectionActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      renderScreen();
-      xSemaphoreGive(renderingMutex);
-      longPressHandler.onRenderComplete();
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 

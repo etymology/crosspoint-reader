@@ -10,6 +10,7 @@
 #include "MappedInputManager.h"
 #include "ScreenComponents.h"
 #include "fontIds.h"
+#include "util/DisplayTaskHelpers.h"
 
 namespace {
 // go home threshold now comes from SETTINGS.getLongPressMs()
@@ -23,7 +24,9 @@ constexpr uint8_t CACHE_VERSION = 2;          // Increment when cache format cha
 
 void TxtReaderActivity::taskTrampoline(void* param) {
   auto* self = static_cast<TxtReaderActivity*>(param);
-  self->displayTaskLoop();
+  DisplayTaskHelpers::displayLoop(
+      self->updateRequired, self->renderingMutex, [self] { self->renderScreen(); },
+      [self] { self->longPressHandler.onRenderComplete(); });
 }
 
 void TxtReaderActivity::onEnter() {
@@ -77,13 +80,7 @@ void TxtReaderActivity::onExit() {
   renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
   // Wait until not rendering to delete task
-  xSemaphoreTake(renderingMutex, portMAX_DELAY);
-  if (displayTaskHandle) {
-    vTaskDelete(displayTaskHandle);
-    displayTaskHandle = nullptr;
-  }
-  vSemaphoreDelete(renderingMutex);
-  renderingMutex = nullptr;
+  DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
   pageOffsets.clear();
   currentPageLines.clear();
   txt.reset();
@@ -131,19 +128,6 @@ void TxtReaderActivity::loop() {
   } else if (nextReleased && currentPage < totalPages - 1) {
     currentPage++;
     updateRequired = true;
-  }
-}
-
-void TxtReaderActivity::displayTaskLoop() {
-  while (true) {
-    if (updateRequired) {
-      updateRequired = false;
-      xSemaphoreTake(renderingMutex, portMAX_DELAY);
-      renderScreen();
-      xSemaphoreGive(renderingMutex);
-      longPressHandler.onRenderComplete();
-    }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 
