@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 
 #include "activities/ActivityWithSubactivity.h"
+#include "util/LongPressHandler.h"
 
 class EpubReaderActivity final : public ActivityWithSubactivity {
   std::shared_ptr<Epub> epub;
@@ -16,6 +17,8 @@ class EpubReaderActivity final : public ActivityWithSubactivity {
   int nextPageNumber = 0;
   int pagesUntilFullRefresh = 0;
   bool updateRequired = false;
+  // Long-press state machine
+  LongPressHandler longPressHandler;
   const std::function<void()> onGoBack;
   const std::function<void()> onGoHome;
 

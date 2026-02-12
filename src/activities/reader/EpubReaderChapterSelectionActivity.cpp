@@ -2,14 +2,14 @@
 
 #include <GfxRenderer.h>
 
+#include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "fontIds.h"
 
 namespace {
-// Time threshold for treating a long press as a page-up/page-down
-constexpr int SKIP_PAGE_MS = 700;
+// Time threshold for treating a long press as a page-up/page-down now derived from settings
 }  // namespace
 
 bool EpubReaderChapterSelectionActivity::hasSyncOption() const { return KOREADER_STORE.hasCredentials(); }
@@ -124,9 +124,45 @@ void EpubReaderChapterSelectionActivity::loop() {
   const bool nextReleased = mappedInput.wasReleased(MappedInputManager::Button::Down) ||
                             mappedInput.wasReleased(MappedInputManager::Button::Right);
 
-  const bool skipPage = mappedInput.getHeldTime() > SKIP_PAGE_MS;
   const int pageItems = getPageItems();
   const int totalItems = getTotalItems();
+
+  // Immediate skip while held (state machine)
+  const bool prevPressed =
+      mappedInput.isPressed(MappedInputManager::Button::Up) || mappedInput.isPressed(MappedInputManager::Button::Left);
+  const bool nextPressed = mappedInput.isPressed(MappedInputManager::Button::Down) ||
+                           mappedInput.isPressed(MappedInputManager::Button::Right);
+
+  // Centralized long-press handling
+  const bool anyWasPressed = mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+                             mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+                             mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+                             mappedInput.wasPressed(MappedInputManager::Button::Right);
+  const bool anyWasReleased = mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+                              mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                              mappedInput.wasReleased(MappedInputManager::Button::Down) ||
+                              mappedInput.wasReleased(MappedInputManager::Button::Right);
+  longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
+
+  auto result = longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                                      SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
+  if (result.mediumPrev) {
+    selectorIndex = ((selectorIndex / pageItems - 1) * pageItems + totalItems) % totalItems;
+    updateRequired = true;
+    return;
+  }
+  if (result.mediumNext) {
+    selectorIndex = ((selectorIndex / pageItems + 1) * pageItems) % totalItems;
+    updateRequired = true;
+    return;
+  }
+
+  const bool skipPage = mappedInput.getHeldTime() > SETTINGS.getMediumPressMs();
+  if (skipPage && longPressHandler.suppressRelease(mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(), prevReleased,
+                                                   nextReleased)) {
+    // Already handled during hold; consume this release until a new cycle
+    return;
+  }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     // Check if sync option is selected (first or last item)
@@ -169,6 +205,7 @@ void EpubReaderChapterSelectionActivity::displayTaskLoop() {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       renderScreen();
       xSemaphoreGive(renderingMutex);
+      longPressHandler.onRenderComplete();
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }

@@ -12,7 +12,7 @@
 #include "fontIds.h"
 
 namespace {
-constexpr unsigned long goHomeMs = 1000;
+// go home threshold now comes from SETTINGS.getLongPressMs()
 constexpr int statusBarMargin = 25;
 constexpr size_t CHUNK_SIZE = 8 * 1024;  // 8KB chunk for reading
 
@@ -95,14 +95,21 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  // Long press BACK (1s+) goes directly to home
-  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= goHomeMs) {
+  // Long-press BACK (go home) — centralized handler
+  longPressHandler.observePressRelease(mappedInput.wasPressed(MappedInputManager::Button::Back),
+                                       mappedInput.wasReleased(MappedInputManager::Button::Back));
+  // Treat medium detection threshold equal to long threshold so poll() yields a single event
+  auto backResult =
+      longPressHandler.poll(mappedInput.isPressed(MappedInputManager::Button::Back), false, mappedInput.getHeldTime(),
+                            SETTINGS.getLongPressMs(), SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
+  if (backResult.mediumPrev) {
     onGoHome();
     return;
   }
 
   // Short press BACK goes to file selection
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && mappedInput.getHeldTime() < goHomeMs) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < SETTINGS.getLongPressMs()) {
     onGoBack();
     return;
   }
@@ -134,6 +141,7 @@ void TxtReaderActivity::displayTaskLoop() {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       renderScreen();
       xSemaphoreGive(renderingMutex);
+      longPressHandler.onRenderComplete();
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }

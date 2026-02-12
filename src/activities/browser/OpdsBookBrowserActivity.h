@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../ActivityWithSubactivity.h"
+#include "util/LongPressHandler.h"
 
 /**
  * Activity for browsing and downloading books from an OPDS server.
@@ -50,6 +51,9 @@ class OpdsBookBrowserActivity final : public ActivityWithSubactivity {
   size_t downloadTotal = 0;
 
   const std::function<void()> onGoHome;
+
+  // Long-press state for page-skip
+  LongPressHandler longPressHandler;
 
   static void taskTrampoline(void* param);
   [[noreturn]] void displayTaskLoop();

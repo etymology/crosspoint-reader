@@ -17,7 +17,7 @@
 
 namespace {
 constexpr int PAGE_ITEMS = 23;
-constexpr int SKIP_PAGE_MS = 700;
+// skip-page threshold now derived from settings
 constexpr char OPDS_ROOT_PATH[] = "opds";  // No leading slash - relative to server URL
 }  // namespace
 
@@ -123,7 +123,44 @@ void OpdsBookBrowserActivity::loop() {
                               mappedInput.wasReleased(MappedInputManager::Button::Left);
     const bool nextReleased = mappedInput.wasReleased(MappedInputManager::Button::Down) ||
                               mappedInput.wasReleased(MappedInputManager::Button::Right);
-    const bool skipPage = mappedInput.getHeldTime() > SKIP_PAGE_MS;
+
+    // Immediate skip detection while button held (state machine)
+    const bool prevPressed = mappedInput.isPressed(MappedInputManager::Button::Up) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextPressed = mappedInput.isPressed(MappedInputManager::Button::Down) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Right);
+
+    // Let centralized handler observe wasPressed/wasReleased to manage re-arming
+    const bool anyWasPressed = mappedInput.wasPressed(MappedInputManager::Button::Up) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Down) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Right);
+    const bool anyWasReleased = mappedInput.wasReleased(MappedInputManager::Button::Up) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Down) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Right);
+    longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
+
+    auto result =
+        longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                              SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
+    if (result.mediumPrev) {
+      selectorIndex = ((selectorIndex / PAGE_ITEMS - 1) * PAGE_ITEMS + entries.size()) % entries.size();
+      updateRequired = true;
+      return;
+    }
+    if (result.mediumNext) {
+      selectorIndex = ((selectorIndex / PAGE_ITEMS + 1) * PAGE_ITEMS) % entries.size();
+      updateRequired = true;
+      return;
+    }
+
+    const bool skipPage = mappedInput.getHeldTime() > SETTINGS.getMediumPressMs();
+    if (skipPage && longPressHandler.suppressRelease(mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                                                     prevReleased, nextReleased)) {
+      // Already handled during hold; consume this release until a new cycle
+      return;
+    }
 
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
       if (!entries.empty()) {
@@ -161,6 +198,7 @@ void OpdsBookBrowserActivity::displayTaskLoop() {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       render();
       xSemaphoreGive(renderingMutex);
+      longPressHandler.onRenderComplete();
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }

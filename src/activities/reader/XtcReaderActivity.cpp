@@ -19,8 +19,7 @@
 #include "fontIds.h"
 
 namespace {
-constexpr unsigned long skipPageMs = 700;
-constexpr unsigned long goHomeMs = 1000;
+// thresholds now come from SETTINGS.getLongPressMs() and getMediumPressMs()
 }  // namespace
 
 void XtcReaderActivity::taskTrampoline(void* param) {
@@ -99,14 +98,16 @@ void XtcReaderActivity::loop() {
     }
   }
 
-  // Long press BACK (1s+) goes directly to home
-  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= goHomeMs) {
+  // Long press BACK goes directly to home
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() >= SETTINGS.getLongPressMs()) {
     onGoHome();
     return;
   }
 
   // Short press BACK goes to file selection
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && mappedInput.getHeldTime() < goHomeMs) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < SETTINGS.getLongPressMs()) {
     onGoBack();
     return;
   }
@@ -117,6 +118,51 @@ void XtcReaderActivity::loop() {
                             (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
                              mappedInput.wasReleased(MappedInputManager::Button::Power)) ||
                             mappedInput.wasReleased(MappedInputManager::Button::Right);
+
+  // Immediate medium-press skip detection (trigger as soon as held threshold reached)
+  if (SETTINGS.longPressChapterSkip) {
+    const bool prevPressed = mappedInput.isPressed(MappedInputManager::Button::PageBack) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextPressed = mappedInput.isPressed(MappedInputManager::Button::PageForward) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Right) ||
+                             (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
+                              mappedInput.isPressed(MappedInputManager::Button::Power));
+
+    const bool anyWasPressed = mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::PageForward) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Right) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Power);
+    const bool anyWasReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Right) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Power);
+    longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
+
+    auto result =
+        longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                              SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
+    if (result.mediumPrev) {
+      const int skipAmount = 10;
+      if (currentPage >= static_cast<uint32_t>(skipAmount)) {
+        currentPage -= skipAmount;
+      } else {
+        currentPage = 0;
+      }
+      updateRequired = true;
+      return;
+    }
+    if (result.mediumNext) {
+      const int skipAmount = 10;
+      currentPage += skipAmount;
+      if (currentPage >= xtc->getPageCount()) {
+        currentPage = xtc->getPageCount();
+      }
+      updateRequired = true;
+      return;
+    }
+  }
 
   if (!prevReleased && !nextReleased) {
     return;
@@ -129,7 +175,12 @@ void XtcReaderActivity::loop() {
     return;
   }
 
-  const bool skipPages = SETTINGS.longPressChapterSkip && mappedInput.getHeldTime() > skipPageMs;
+  // If the release occurred after a medium/long hold, do not treat it as a short press
+  if ((prevReleased || nextReleased) && mappedInput.getHeldTime() >= SETTINGS.getMediumPressMs()) {
+    return;
+  }
+
+  const bool skipPages = SETTINGS.longPressChapterSkip && mappedInput.getHeldTime() > SETTINGS.getMediumPressMs();
   const int skipAmount = skipPages ? 10 : 1;
 
   if (prevReleased) {
@@ -155,6 +206,7 @@ void XtcReaderActivity::displayTaskLoop() {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       renderScreen();
       xSemaphoreGive(renderingMutex);
+      longPressHandler.onRenderComplete();
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }

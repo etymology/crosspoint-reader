@@ -94,6 +94,14 @@ class CrossPointSettings {
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press chapter skip on side buttons
   uint8_t longPressChapterSkip = 1;
+  // Long-press duration option index (0=500ms,1=750ms,2=1000ms,3=1500ms)
+  enum LONG_PRESS_DURATION { LP_500MS = 0, LP_750MS = 1, LP_1000MS = 2, LP_1500MS = 3 };
+  uint8_t longPressDuration = LP_1000MS;  // default 1000 ms
+  // Whether long-press actions should repeat while holding (0 = no repeat, 1 = repeat)
+  uint8_t longPressRepeat = 0;
+
+  unsigned long getLongPressMs() const;
+  unsigned long getMediumPressMs() const;
 
   ~CrossPointSettings() = default;
 

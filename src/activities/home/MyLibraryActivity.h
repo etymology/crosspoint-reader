@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../Activity.h"
+#include "util/LongPressHandler.h"
 
 class MyLibraryActivity final : public Activity {
  public:
@@ -28,6 +29,13 @@ class MyLibraryActivity final : public Activity {
   // Files tab state (from FileSelectionActivity)
   std::string basepath = "/";
   std::vector<std::string> files;
+
+  // Delete confirmation overlay state
+  bool deleteOverlayActive = false;
+  // 0 = Delete (danger), 1 = Cancel (default)
+  int deleteOverlaySelection = 1;
+  // When overlay opens due to long-press, ignore the initial confirm release
+  bool deleteOverlayIgnoreConfirmRelease = false;
 
   // Callbacks
   const std::function<void()> onGoHome;
@@ -50,6 +58,8 @@ class MyLibraryActivity final : public Activity {
   void render() const;
   void renderRecentTab() const;
   void renderFilesTab() const;
+  // Long-press state for page-skip
+  LongPressHandler longPressHandler;
 
  public:
   explicit MyLibraryActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

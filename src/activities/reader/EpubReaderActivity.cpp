@@ -15,8 +15,6 @@
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
-constexpr unsigned long skipChapterMs = 700;
-constexpr unsigned long goHomeMs = 1000;
 constexpr int statusBarMargin = 19;
 }  // namespace
 
@@ -151,14 +149,16 @@ void EpubReaderActivity::loop() {
     xSemaphoreGive(renderingMutex);
   }
 
-  // Long press BACK (1s+) goes directly to home
-  if (mappedInput.isPressed(MappedInputManager::Button::Back) && mappedInput.getHeldTime() >= goHomeMs) {
+  // Long press BACK goes directly to home
+  if (mappedInput.isPressed(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() >= SETTINGS.getLongPressMs()) {
     onGoHome();
     return;
   }
 
   // Short press BACK goes to file selection
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && mappedInput.getHeldTime() < goHomeMs) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+      mappedInput.getHeldTime() < SETTINGS.getLongPressMs()) {
     onGoBack();
     return;
   }
@@ -170,11 +170,56 @@ void EpubReaderActivity::loop() {
                              mappedInput.wasReleased(MappedInputManager::Button::Power)) ||
                             mappedInput.wasReleased(MappedInputManager::Button::Right);
 
+  // Immediate medium-press skip detection (trigger as soon as held threshold reached)
+  if (SETTINGS.longPressChapterSkip) {
+    const bool prevPressed = mappedInput.isPressed(MappedInputManager::Button::PageBack) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Left);
+    const bool nextPressed = mappedInput.isPressed(MappedInputManager::Button::PageForward) ||
+                             mappedInput.isPressed(MappedInputManager::Button::Right) ||
+                             (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
+                              mappedInput.isPressed(MappedInputManager::Button::Power));
+
+    // Let the centralized handler observe wasPressed/wasReleased to handle new-cycle re-arming
+    const bool anyWasPressed = mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Left) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::PageForward) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Right) ||
+                               mappedInput.wasPressed(MappedInputManager::Button::Power);
+    const bool anyWasReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Left) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Right) ||
+                                mappedInput.wasReleased(MappedInputManager::Button::Power);
+    longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
+
+    auto result =
+        longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                              SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
+    if (result.mediumPrev) {
+      xSemaphoreTake(renderingMutex, portMAX_DELAY);
+      nextPageNumber = 0;
+      currentSpineIndex = currentSpineIndex - 1;
+      section.reset();
+      xSemaphoreGive(renderingMutex);
+      updateRequired = true;
+      return;
+    }
+    if (result.mediumNext) {
+      xSemaphoreTake(renderingMutex, portMAX_DELAY);
+      nextPageNumber = 0;
+      currentSpineIndex = currentSpineIndex + 1;
+      section.reset();
+      xSemaphoreGive(renderingMutex);
+      updateRequired = true;
+      return;
+    }
+  }
+
   if (!prevReleased && !nextReleased) {
     return;
   }
 
-  // any botton press when at end of the book goes back to the last page
+  // any button press when at end of the book goes back to the last page
   if (currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount()) {
     currentSpineIndex = epub->getSpineItemsCount() - 1;
     nextPageNumber = UINT16_MAX;
@@ -182,16 +227,10 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  const bool skipChapter = SETTINGS.longPressChapterSkip && mappedInput.getHeldTime() > skipChapterMs;
-
-  if (skipChapter) {
-    // We don't want to delete the section mid-render, so grab the semaphore
-    xSemaphoreTake(renderingMutex, portMAX_DELAY);
-    nextPageNumber = 0;
-    currentSpineIndex = nextReleased ? currentSpineIndex + 1 : currentSpineIndex - 1;
-    section.reset();
-    xSemaphoreGive(renderingMutex);
-    updateRequired = true;
+  // If the release occurred after a medium/long hold, do not treat it as a short press
+  if (longPressHandler.suppressRelease(mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(), prevReleased,
+                                       nextReleased)) {
+    // consume the release; new-cycle rearming is handled by the state machine
     return;
   }
 
@@ -200,6 +239,7 @@ void EpubReaderActivity::loop() {
     updateRequired = true;
     return;
   }
+  // (handled above) release after hold is consumed
 
   if (prevReleased) {
     if (section->currentPage > 0) {
@@ -235,6 +275,8 @@ void EpubReaderActivity::displayTaskLoop() {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
       renderScreen();
       xSemaphoreGive(renderingMutex);
+      // If a repeating long-press action requested re-arming after render, do it now
+      longPressHandler.onRenderComplete();
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
@@ -270,7 +312,9 @@ void EpubReaderActivity::renderScreen() {
   orientedMarginTop += SETTINGS.screenMargin;
   orientedMarginLeft += SETTINGS.screenMargin;
   orientedMarginRight += SETTINGS.screenMargin;
-  orientedMarginBottom += statusBarMargin;
+  if (SETTINGS.statusBar != CrossPointSettings::STATUS_BAR_MODE::NONE) {
+    orientedMarginBottom += statusBarMargin;
+  }
 
   if (!section) {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;

@@ -13,6 +13,7 @@
 #include <freertos/task.h>
 
 #include "activities/ActivityWithSubactivity.h"
+#include "util/LongPressHandler.h"
 
 class XtcReaderActivity final : public ActivityWithSubactivity {
   std::shared_ptr<Xtc> xtc;
@@ -21,6 +22,8 @@ class XtcReaderActivity final : public ActivityWithSubactivity {
   uint32_t currentPage = 0;
   int pagesUntilFullRefresh = 0;
   bool updateRequired = false;
+  // Long-press state machine
+  LongPressHandler longPressHandler;
   const std::function<void()> onGoBack;
   const std::function<void()> onGoHome;
 
