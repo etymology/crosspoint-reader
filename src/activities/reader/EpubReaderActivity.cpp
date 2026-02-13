@@ -332,7 +332,7 @@ void EpubReaderActivity::renderScreen() {
         renderer.fillRect(boxXNoBar, boxY, boxWidthNoBar, boxHeightNoBar, false);
         renderer.drawText(UI_12_FONT_ID, boxXNoBar + boxMargin, boxY + boxMargin, "Indexing...");
         renderer.drawRect(boxXNoBar + 5, boxY + 5, boxWidthNoBar - 10, boxHeightNoBar - 10);
-        renderer.displayWindowAsync(boxXNoBar, boxY, boxWidthNoBar, boxHeightNoBar);
+        renderer.displayBufferAsync();
         pagesUntilFullRefresh = 0;
       }
 
@@ -342,7 +342,7 @@ void EpubReaderActivity::renderScreen() {
         renderer.drawText(UI_12_FONT_ID, boxXWithBar + boxMargin, boxY + boxMargin, "Indexing...");
         renderer.drawRect(boxXWithBar + 5, boxY + 5, boxWidthWithBar - 10, boxHeightWithBar - 10);
         renderer.drawRect(barX, barY, barWidth, barHeight);
-        renderer.displayWindowAsync(boxXWithBar, boxY, boxWidthWithBar, boxHeightWithBar);
+        renderer.displayBufferAsync();
         yield();
       };
 
@@ -356,7 +356,7 @@ void EpubReaderActivity::renderScreen() {
 
         const int deltaWidth = fillWidth - lastFillWidth;
         renderer.fillRect(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2, true);
-        if (renderer.displayWindowAsync(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2)) {
+        if (renderer.displayBufferAsync(EInkDisplay::FAST_REFRESH)) {
           lastFillWidth = fillWidth;
         }
         yield();

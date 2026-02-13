@@ -201,7 +201,7 @@ void TxtReaderActivity::buildPageIndex() {
   renderer.drawText(UI_12_FONT_ID, boxX + boxMargin, boxY + boxMargin, "Indexing...");
   renderer.drawRect(boxX + 5, boxY + 5, boxWidth - 10, boxHeight - 10);
   renderer.drawRect(barX, barY, barWidth, barHeight);
-  renderer.displayWindowAsync(boxX, boxY, boxWidth, boxHeight);
+  renderer.displayBufferAsync();
 
   int lastFillWidth = 0;
   while (offset < fileSize) {
@@ -232,7 +232,7 @@ void TxtReaderActivity::buildPageIndex() {
       if (fillWidth > lastFillWidth) {
         const int deltaWidth = fillWidth - lastFillWidth;
         renderer.fillRect(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2, true);
-        if (renderer.displayWindowAsync(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2)) {
+        if (renderer.displayBufferAsync(EInkDisplay::FAST_REFRESH)) {
           lastFillWidth = fillWidth;
         }
       }

@@ -2,107 +2,6 @@
 
 #include <Utf8.h>
 
-namespace {
-bool mapWindowToPanelAlignedRect(const GfxRenderer::Orientation orientation, const int logicalWidth, const int logicalHeight,
-                                 int x, int y, int width, int height, uint16_t* outX, uint16_t* outY, uint16_t* outW,
-                                 uint16_t* outH) {
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-
-  // Clip to logical screen coordinates first.
-  if (x >= logicalWidth || y >= logicalHeight) {
-    return false;
-  }
-  if (x < 0) {
-    width += x;
-    x = 0;
-  }
-  if (y < 0) {
-    height += y;
-    y = 0;
-  }
-  if (x + width > logicalWidth) {
-    width = logicalWidth - x;
-  }
-  if (y + height > logicalHeight) {
-    height = logicalHeight - y;
-  }
-  if (width <= 0 || height <= 0) {
-    return false;
-  }
-
-  int panelX = 0;
-  int panelY = 0;
-  int panelW = 0;
-  int panelH = 0;
-
-  // Map logical window rectangle to panel coordinates.
-  switch (orientation) {
-    case GfxRenderer::Portrait:
-      panelX = y;
-      panelY = EInkDisplay::DISPLAY_HEIGHT - x - width;
-      panelW = height;
-      panelH = width;
-      break;
-    case GfxRenderer::LandscapeClockwise:
-      panelX = EInkDisplay::DISPLAY_WIDTH - x - width;
-      panelY = EInkDisplay::DISPLAY_HEIGHT - y - height;
-      panelW = width;
-      panelH = height;
-      break;
-    case GfxRenderer::PortraitInverted:
-      panelX = EInkDisplay::DISPLAY_WIDTH - y - height;
-      panelY = x;
-      panelW = height;
-      panelH = width;
-      break;
-    case GfxRenderer::LandscapeCounterClockwise:
-      panelX = x;
-      panelY = y;
-      panelW = width;
-      panelH = height;
-      break;
-  }
-
-  // Clip to panel bounds.
-  if (panelX < 0) {
-    panelW += panelX;
-    panelX = 0;
-  }
-  if (panelY < 0) {
-    panelH += panelY;
-    panelY = 0;
-  }
-  if (panelX + panelW > EInkDisplay::DISPLAY_WIDTH) {
-    panelW = EInkDisplay::DISPLAY_WIDTH - panelX;
-  }
-  if (panelY + panelH > EInkDisplay::DISPLAY_HEIGHT) {
-    panelH = EInkDisplay::DISPLAY_HEIGHT - panelY;
-  }
-  if (panelW <= 0 || panelH <= 0) {
-    return false;
-  }
-
-  // SSD1677 window writes require x/width to be byte-aligned.
-  const int alignedX = panelX & ~0x07;
-  int alignedXEnd = (panelX + panelW + 7) & ~0x07;
-  if (alignedXEnd > EInkDisplay::DISPLAY_WIDTH) {
-    alignedXEnd = EInkDisplay::DISPLAY_WIDTH;
-  }
-  const int alignedW = alignedXEnd - alignedX;
-  if (alignedW <= 0) {
-    return false;
-  }
-
-  *outX = static_cast<uint16_t>(alignedX);
-  *outY = static_cast<uint16_t>(panelY);
-  *outW = static_cast<uint16_t>(alignedW);
-  *outH = static_cast<uint16_t>(panelH);
-  return true;
-}
-}  // namespace
-
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 void GfxRenderer::rotateCoordinates(const int x, const int y, int* rotatedX, int* rotatedY) const {
@@ -520,42 +419,17 @@ void GfxRenderer::displayBuffer(const EInkDisplay::RefreshMode refreshMode) cons
   frameBufferDirty = false;
 }
 
-void GfxRenderer::displayWindow(int x, int y, int width, int height) const {
-  uint16_t panelX = 0;
-  uint16_t panelY = 0;
-  uint16_t panelW = 0;
-  uint16_t panelH = 0;
-  if (!mapWindowToPanelAlignedRect(orientation, getScreenWidth(), getScreenHeight(), x, y, width, height, &panelX, &panelY,
-                                   &panelW, &panelH)) {
-    return;
+bool GfxRenderer::displayBufferAsync(const EInkDisplay::RefreshMode refreshMode) const {
+  if (!frameBufferDirty && refreshMode == EInkDisplay::FAST_REFRESH) {
+    return true;
   }
 
-  einkDisplay.displayWindow(panelX, panelY, panelW, panelH);
-
-  if (panelX == 0 && panelY == 0 && panelW == EInkDisplay::DISPLAY_WIDTH && panelH == EInkDisplay::DISPLAY_HEIGHT) {
-    frameBufferDirty = false;
-  }
-}
-
-bool GfxRenderer::displayWindowAsync(int x, int y, int width, int height) const {
-  uint16_t panelX = 0;
-  uint16_t panelY = 0;
-  uint16_t panelW = 0;
-  uint16_t panelH = 0;
-  if (!mapWindowToPanelAlignedRect(orientation, getScreenWidth(), getScreenHeight(), x, y, width, height, &panelX, &panelY,
-                                   &panelW, &panelH)) {
-    return false;
-  }
-
-  const bool started = einkDisplay.displayWindowAsync(panelX, panelY, panelW, panelH);
+  const bool started = einkDisplay.displayBufferAsync(refreshMode);
   if (!started) {
     return false;
   }
 
-  if (panelX == 0 && panelY == 0 && panelW == EInkDisplay::DISPLAY_WIDTH && panelH == EInkDisplay::DISPLAY_HEIGHT) {
-    frameBufferDirty = false;
-  }
-
+  frameBufferDirty = false;
   return true;
 }
 
