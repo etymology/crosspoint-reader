@@ -273,7 +273,8 @@ void Epub::parseCssFiles() const {
 }
 
 // load in the meta data for the epub file
-bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
+bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss,
+                const std::function<void()>& onMetadataBuildStart) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
 
   // Initialize spine/TOC cache
@@ -303,6 +304,9 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
 
   // Cache doesn't exist or is invalid, build it
   LOG_DBG("EBP", "Cache not found, building spine/TOC cache");
+  if (onMetadataBuildStart) {
+    onMetadataBuildStart();
+  }
   setupCacheDir();
 
   const uint32_t indexingStart = millis();

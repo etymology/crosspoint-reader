@@ -133,20 +133,26 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   serialization::writeString(bookFile, metadata.coverItemHref);
   serialization::writeString(bookFile, metadata.textReferenceHref);
 
+  // Read all spine entries once: write LUT positions now, reuse entries later.
+  std::vector<SpineEntry> spineEntries;
+  spineEntries.reserve(spineCount);
+
   // Loop through spine entries, writing LUT positions
   spineFile.seek(0);
   for (int i = 0; i < spineCount; i++) {
     uint32_t pos = spineFile.position();
     auto spineEntry = readSpineEntry(spineFile);
     serialization::writePod(bookFile, pos + lutOffset + lutSize);
+    spineEntries.emplace_back(std::move(spineEntry));
   }
+  const uint32_t spineDataSize = static_cast<uint32_t>(spineFile.position());
 
   // Loop through toc entries, writing LUT positions
   tocFile.seek(0);
   for (int i = 0; i < tocCount; i++) {
     uint32_t pos = tocFile.position();
     auto tocEntry = readTocEntry(tocFile);
-    serialization::writePod(bookFile, pos + lutOffset + lutSize + static_cast<uint32_t>(spineFile.position()));
+    serialization::writePod(bookFile, pos + lutOffset + lutSize + spineDataSize);
   }
 
   // LUTs complete
@@ -190,10 +196,8 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
     std::vector<ZipFile::SizeTarget> targets;
     targets.reserve(spineCount);
 
-    spineFile.seek(0);
     for (int i = 0; i < spineCount; i++) {
-      auto entry = readSpineEntry(spineFile);
-      std::string path = FsHelpers::normalisePath(entry.href);
+      std::string path = FsHelpers::normalisePath(spineEntries[i].href);
 
       ZipFile::SizeTarget t;
       t.hash = ZipFile::fnvHash64(path.c_str(), path.size());
@@ -217,18 +221,17 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   }
 
   uint32_t cumSize = 0;
-  spineFile.seek(0);
   int lastSpineTocIndex = -1;
   for (int i = 0; i < spineCount; i++) {
-    auto spineEntry = readSpineEntry(spineFile);
+    auto& spineEntry = spineEntries[i];
 
     spineEntry.tocIndex = spineToTocIndex[i];
 
     // Not a huge deal if we don't fine a TOC entry for the spine entry, this is expected behaviour for EPUBs
     // Logging here is for debugging
     if (spineEntry.tocIndex == -1) {
-      LOG_DBG("BMC", "Warning: Could not find TOC entry for spine item %d: %s, using title from last section", i,
-              spineEntry.href.c_str());
+      // LOG_DBG("BMC", "Warning: Could not find TOC entry for spine item %d: %s, using title from last section", i,
+      //         spineEntry.href.c_str());
       spineEntry.tocIndex = lastSpineTocIndex;
     }
     lastSpineTocIndex = spineEntry.tocIndex;

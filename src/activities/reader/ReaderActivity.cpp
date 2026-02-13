@@ -9,6 +9,7 @@
 #include "Xtc.h"
 #include "XtcReaderActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
+#include "components/UITheme.h"
 #include "util/StringUtils.h"
 
 std::string ReaderActivity::extractFolderPath(const std::string& filePath) {
@@ -35,7 +36,7 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
   }
 
   auto epub = std::unique_ptr<Epub>(new Epub(path, "/.crosspoint"));
-  if (epub->load()) {
+  if (epub->load(true, false, [this]() { GUI.drawPopup(renderer, "Preparing metadata"); })) {
     return epub;
   }
 
