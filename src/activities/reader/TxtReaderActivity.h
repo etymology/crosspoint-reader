@@ -44,6 +44,8 @@ class TxtReaderActivity final : public ActivityWithSubactivity {
 
   void initializeReader();
   bool loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset);
+  bool loadPageAtOffset(FsFile& file, size_t fileSize, size_t offset, std::vector<std::string>& outLines,
+                        size_t& nextOffset);
   void buildPageIndex();
   bool loadPageIndexCache();
   void savePageIndexCache() const;

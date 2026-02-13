@@ -1,5 +1,7 @@
 #include "EpubReaderActivity.h"
 
+#include <cstdint>
+
 #include <Epub/Page.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -10,13 +12,37 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
-#include "ScreenComponents.h"
+#include "ReaderActivityHelpers.h"
 #include "fontIds.h"
 #include "util/DisplayTaskHelpers.h"
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
 constexpr int statusBarMargin = 19;
+constexpr size_t legacyProgressSize = 4;
+constexpr size_t progressSizeWithSectionPageCount = 6;
+
+int mapPageBySectionPortion(const int savedPage, const uint16_t savedPageCount, const uint16_t targetPageCount) {
+  if (targetPageCount == 0 || targetPageCount == 1 || savedPageCount <= 1) {
+    return 0;
+  }
+
+  int clampedSavedPage = savedPage;
+  if (clampedSavedPage < 0) {
+    clampedSavedPage = 0;
+  } else if (clampedSavedPage >= savedPageCount) {
+    clampedSavedPage = savedPageCount - 1;
+  }
+
+  const int64_t numerator = static_cast<int64_t>(clampedSavedPage) * (targetPageCount - 1);
+  int mappedPage = static_cast<int>((numerator + ((savedPageCount - 1) / 2)) / (savedPageCount - 1));
+  if (mappedPage < 0) {
+    mappedPage = 0;
+  } else if (mappedPage >= targetPageCount) {
+    mappedPage = targetPageCount - 1;
+  }
+  return mappedPage;
+}
 }  // namespace
 
 void EpubReaderActivity::taskTrampoline(void* param) {
@@ -33,23 +59,7 @@ void EpubReaderActivity::onEnter() {
     return;
   }
 
-  // Configure screen orientation based on settings
-  switch (SETTINGS.orientation) {
-    case CrossPointSettings::ORIENTATION::PORTRAIT:
-      renderer.setOrientation(GfxRenderer::Orientation::Portrait);
-      break;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CW:
-      renderer.setOrientation(GfxRenderer::Orientation::LandscapeClockwise);
-      break;
-    case CrossPointSettings::ORIENTATION::INVERTED:
-      renderer.setOrientation(GfxRenderer::Orientation::PortraitInverted);
-      break;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CCW:
-      renderer.setOrientation(GfxRenderer::Orientation::LandscapeCounterClockwise);
-      break;
-    default:
-      break;
-  }
+  ReaderActivityHelpers::applyReaderOrientation(renderer);
 
   renderingMutex = xSemaphoreCreateMutex();
 
@@ -57,11 +67,23 @@ void EpubReaderActivity::onEnter() {
 
   FsFile f;
   if (SdMan.openFileForRead("ERS", epub->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[4];
-    if (f.read(data, 4) == 4) {
+    uint8_t data[progressSizeWithSectionPageCount];
+    const int bytesRead = f.read(data, sizeof(data));
+    if (bytesRead >= legacyProgressSize) {
       currentSpineIndex = data[0] + (data[1] << 8);
       nextPageNumber = data[2] + (data[3] << 8);
-      Serial.printf("[%lu] [ERS] Loaded cache: %d, %d\n", millis(), currentSpineIndex, nextPageNumber);
+      progressRestoreSpineIndex = currentSpineIndex;
+      hasPendingProgressRestore = true;
+      hasProgressRestoreSectionPageCount = bytesRead >= progressSizeWithSectionPageCount;
+      if (hasProgressRestoreSectionPageCount) {
+        progressRestoreSectionPageCount = data[4] + (data[5] << 8);
+        Serial.printf("[%lu] [ERS] Loaded cache: spine %d, page %d/%d\n", millis(), currentSpineIndex, nextPageNumber,
+                      progressRestoreSectionPageCount);
+      } else {
+        progressRestoreSectionPageCount = 0;
+        Serial.printf("[%lu] [ERS] Loaded legacy cache: spine %d, page %d\n", millis(), currentSpineIndex,
+                      nextPageNumber);
+      }
     }
     f.close();
   }
@@ -96,7 +118,7 @@ void EpubReaderActivity::onExit() {
   ActivityWithSubactivity::onExit();
 
   // Reset orientation back to portrait for the rest of the UI
-  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
+  ReaderActivityHelpers::resetToUiOrientation(renderer);
 
   // Wait until not rendering to delete task to avoid killing mid-instruction to EPD
   DisplayTaskHelpers::stopTask(renderingMutex, displayTaskHandle);
@@ -160,37 +182,15 @@ void EpubReaderActivity::loop() {
     return;
   }
 
-  const bool prevReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
-                            mappedInput.wasReleased(MappedInputManager::Button::Left);
-  const bool nextReleased = mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
-                            (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
-                             mappedInput.wasReleased(MappedInputManager::Button::Power)) ||
-                            mappedInput.wasReleased(MappedInputManager::Button::Right);
+  const auto pageTurnInput = ReaderActivityHelpers::readPageTurnInputState(mappedInput);
 
   // Immediate medium-press skip detection (trigger as soon as held threshold reached)
   if (SETTINGS.longPressChapterSkip) {
-    const bool prevPressed = mappedInput.isPressed(MappedInputManager::Button::PageBack) ||
-                             mappedInput.isPressed(MappedInputManager::Button::Left);
-    const bool nextPressed = mappedInput.isPressed(MappedInputManager::Button::PageForward) ||
-                             mappedInput.isPressed(MappedInputManager::Button::Right) ||
-                             (SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::PAGE_TURN &&
-                              mappedInput.isPressed(MappedInputManager::Button::Power));
-
-    // Let the centralized handler observe wasPressed/wasReleased to handle new-cycle re-arming
-    const bool anyWasPressed = mappedInput.wasPressed(MappedInputManager::Button::PageBack) ||
-                               mappedInput.wasPressed(MappedInputManager::Button::Left) ||
-                               mappedInput.wasPressed(MappedInputManager::Button::PageForward) ||
-                               mappedInput.wasPressed(MappedInputManager::Button::Right) ||
-                               mappedInput.wasPressed(MappedInputManager::Button::Power);
-    const bool anyWasReleased = mappedInput.wasReleased(MappedInputManager::Button::PageBack) ||
-                                mappedInput.wasReleased(MappedInputManager::Button::Left) ||
-                                mappedInput.wasReleased(MappedInputManager::Button::PageForward) ||
-                                mappedInput.wasReleased(MappedInputManager::Button::Right) ||
-                                mappedInput.wasReleased(MappedInputManager::Button::Power);
-    longPressHandler.observePressRelease(anyWasPressed, anyWasReleased);
+    longPressHandler.observePressRelease(pageTurnInput.anyWasPressed, pageTurnInput.anyWasReleased);
 
     auto result =
-        longPressHandler.poll(prevPressed, nextPressed, mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+        longPressHandler.poll(pageTurnInput.prevPressed, pageTurnInput.nextPressed, mappedInput.getHeldTime(),
+                              SETTINGS.getMediumPressMs(),
                               SETTINGS.getLongPressMs(), SETTINGS.longPressRepeat);
     if (result.mediumPrev) {
       xSemaphoreTake(renderingMutex, portMAX_DELAY);
@@ -212,7 +212,7 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  if (!prevReleased && !nextReleased) {
+  if (!pageTurnInput.prevReleased && !pageTurnInput.nextReleased) {
     return;
   }
 
@@ -225,8 +225,8 @@ void EpubReaderActivity::loop() {
   }
 
   // If the release occurred after a medium/long hold, do not treat it as a short press
-  if (longPressHandler.suppressRelease(mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(), prevReleased,
-                                       nextReleased)) {
+  if (longPressHandler.suppressRelease(mappedInput.getHeldTime(), SETTINGS.getMediumPressMs(),
+                                       pageTurnInput.prevReleased, pageTurnInput.nextReleased)) {
     // consume the release; new-cycle rearming is handled by the state machine
     return;
   }
@@ -238,7 +238,7 @@ void EpubReaderActivity::loop() {
   }
   // (handled above) release after hold is consumed
 
-  if (prevReleased) {
+  if (pageTurnInput.prevReleased) {
     if (section->currentPage > 0) {
       section->currentPage--;
     } else {
@@ -303,6 +303,7 @@ void EpubReaderActivity::renderScreen() {
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     Serial.printf("[%lu] [ERS] Loading file: %s, index: %d\n", millis(), filepath.c_str(), currentSpineIndex);
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
+    bool sectionReindexed = false;
 
     const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
     const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
@@ -312,53 +313,23 @@ void EpubReaderActivity::renderScreen() {
                                   viewportHeight, SETTINGS.hyphenationEnabled)) {
       Serial.printf("[%lu] [ERS] Cache not found, building...\n", millis());
 
-      // Progress bar dimensions
-      constexpr int barWidth = 200;
-      constexpr int barHeight = 10;
-      constexpr int boxMargin = 20;
-      const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, "Indexing...");
-      const int boxWidthWithBar = (barWidth > textWidth ? barWidth : textWidth) + boxMargin * 2;
-      const int boxWidthNoBar = textWidth + boxMargin * 2;
-      const int boxHeightWithBar = renderer.getLineHeight(UI_12_FONT_ID) + barHeight + boxMargin * 3;
-      const int boxHeightNoBar = renderer.getLineHeight(UI_12_FONT_ID) + boxMargin * 2;
-      const int boxXWithBar = (renderer.getScreenWidth() - boxWidthWithBar) / 2;
-      const int boxXNoBar = (renderer.getScreenWidth() - boxWidthNoBar) / 2;
-      constexpr int boxY = 50;
-      const int barX = boxXWithBar + (boxWidthWithBar - barWidth) / 2;
-      const int barY = boxY + renderer.getLineHeight(UI_12_FONT_ID) + boxMargin * 2;
+      auto progressBox = ReaderActivityHelpers::makeIndexingProgressBox(renderer);
 
       // Always show "Indexing..." text first
       {
-        renderer.fillRect(boxXNoBar, boxY, boxWidthNoBar, boxHeightNoBar, false);
-        renderer.drawText(UI_12_FONT_ID, boxXNoBar + boxMargin, boxY + boxMargin, "Indexing...");
-        renderer.drawRect(boxXNoBar + 5, boxY + 5, boxWidthNoBar - 10, boxHeightNoBar - 10);
-        renderer.displayBufferAsync();
+        ReaderActivityHelpers::drawIndexingProgressTextOnly(renderer, progressBox);
         pagesUntilFullRefresh = 0;
       }
 
       // Setup callback - only called for chapters >= 50KB, redraws with progress bar
-      auto progressSetup = [this, boxXWithBar, boxWidthWithBar, boxHeightWithBar, barX, barY] {
-        renderer.fillRect(boxXWithBar, boxY, boxWidthWithBar, boxHeightWithBar, false);
-        renderer.drawText(UI_12_FONT_ID, boxXWithBar + boxMargin, boxY + boxMargin, "Indexing...");
-        renderer.drawRect(boxXWithBar + 5, boxY + 5, boxWidthWithBar - 10, boxHeightWithBar - 10);
-        renderer.drawRect(barX, barY, barWidth, barHeight);
-        renderer.displayBufferAsync();
+      auto progressSetup = [this, &progressBox] {
+        ReaderActivityHelpers::drawIndexingProgressWithBar(renderer, progressBox);
         yield();
       };
 
-      int lastFillWidth = 0;
       // Progress callback to update progress bar
-      auto progressCallback = [this, barX, barY, barWidth, barHeight, &lastFillWidth](int progress) {
-        const int fillWidth = (barWidth - 2) * progress / 100;
-        if (fillWidth <= lastFillWidth) {
-          return;
-        }
-
-        const int deltaWidth = fillWidth - lastFillWidth;
-        renderer.fillRect(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2, true);
-        if (renderer.displayBufferAsync(EInkDisplay::FAST_REFRESH)) {
-          lastFillWidth = fillWidth;
-        }
+      auto progressCallback = [this, &progressBox](int progress) {
+        ReaderActivityHelpers::updateIndexingProgressWithBar(renderer, progressBox, progress);
         yield();
       };
 
@@ -369,6 +340,7 @@ void EpubReaderActivity::renderScreen() {
         section.reset();
         return;
       }
+      sectionReindexed = true;
     } else {
       Serial.printf("[%lu] [ERS] Cache found, skipping build...\n", millis());
     }
@@ -376,8 +348,26 @@ void EpubReaderActivity::renderScreen() {
     if (nextPageNumber == UINT16_MAX) {
       section->currentPage = section->pageCount - 1;
     } else {
-      section->currentPage = nextPageNumber;
+      int targetPage = nextPageNumber;
+      if (sectionReindexed && hasPendingProgressRestore && hasProgressRestoreSectionPageCount &&
+          progressRestoreSpineIndex == currentSpineIndex) {
+        targetPage = mapPageBySectionPortion(nextPageNumber, progressRestoreSectionPageCount, section->pageCount);
+        Serial.printf("[%lu] [ERS] Reindexed section: remapped page %d/%d -> %d/%d\n", millis(), nextPageNumber,
+                      progressRestoreSectionPageCount, targetPage, section->pageCount);
+      }
+
+      if (section->pageCount == 0) {
+        targetPage = 0;
+      } else if (targetPage < 0) {
+        targetPage = 0;
+      } else if (targetPage >= section->pageCount) {
+        targetPage = section->pageCount - 1;
+      }
+
+      section->currentPage = targetPage;
     }
+    hasPendingProgressRestore = false;
+    hasProgressRestoreSectionPageCount = false;
   }
 
   renderer.clearScreen();
@@ -413,12 +403,14 @@ void EpubReaderActivity::renderScreen() {
 
   FsFile f;
   if (SdMan.openFileForWrite("ERS", epub->getCachePath() + "/progress.bin", f)) {
-    uint8_t data[4];
+    uint8_t data[progressSizeWithSectionPageCount];
     data[0] = currentSpineIndex & 0xFF;
     data[1] = (currentSpineIndex >> 8) & 0xFF;
     data[2] = section->currentPage & 0xFF;
     data[3] = (section->currentPage >> 8) & 0xFF;
-    f.write(data, 4);
+    data[4] = section->pageCount & 0xFF;
+    data[5] = (section->pageCount >> 8) & 0xFF;
+    f.write(data, sizeof(data));
     f.close();
   }
 }
@@ -428,112 +420,57 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                                         const int orientedMarginLeft) {
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
   renderStatusBar(orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
-  if (pagesUntilFullRefresh <= 1) {
-    renderer.displayBuffer(EInkDisplay::HALF_REFRESH);
-    pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
-  } else {
-    renderer.displayBuffer();
-    pagesUntilFullRefresh--;
-  }
-
-  // Save bw buffer to reset buffer state after grayscale data sync
-  renderer.storeBwBuffer();
-
-  // grayscale rendering
-  // TODO: Only do this if font supports it
-  if (SETTINGS.textAntiAliasing) {
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-    page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
-    renderer.copyGrayscaleLsbBuffers();
-
-    // Render and copy to MSB buffer
-    renderer.clearScreen(0x00);
-    renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-    page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
-    renderer.copyGrayscaleMsbBuffers();
-
-    // display grayscale part
-    renderer.displayGrayBuffer();
-    renderer.setRenderMode(GfxRenderer::BW);
-  }
-
-  // restore the bw data
-  renderer.restoreBwBuffer();
+  ReaderActivityHelpers::displayWithRefreshCadence(renderer, pagesUntilFullRefresh);
+  ReaderActivityHelpers::renderAntiAliasedText(renderer, SETTINGS.textAntiAliasing,
+                                               [this, &page, orientedMarginLeft, orientedMarginTop] {
+                                                 page->render(this->renderer, SETTINGS.getReaderFontId(),
+                                                              orientedMarginLeft, orientedMarginTop);
+                                               });
 }
 
 void EpubReaderActivity::renderStatusBar(const int orientedMarginRight, const int orientedMarginBottom,
                                          const int orientedMarginLeft) const {
-  // determine visible status bar elements
-  const bool showProgress = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL;
-  const bool showBattery = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::NO_PROGRESS ||
-                           SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL;
-  const bool showChapterTitle = SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::NO_PROGRESS ||
-                                SETTINGS.statusBar == CrossPointSettings::STATUS_BAR_MODE::FULL;
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage == CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_NEVER;
+  ReaderActivityHelpers::renderStatusBar(
+      renderer, orientedMarginRight, orientedMarginBottom, orientedMarginLeft, showBatteryPercentage,
+      1,  // EPUB battery has +1px offset
+      [this] {
+        const float sectionChapterProg = static_cast<float>(section->currentPage) / section->pageCount;
+        const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
 
-  // Position status bar near the bottom of the logical screen, regardless of orientation
-  const auto screenHeight = renderer.getScreenHeight();
-  const auto textY = screenHeight - orientedMarginBottom - 4;
-  int progressTextWidth = 0;
+        char progressStr[32];
+        snprintf(progressStr, sizeof(progressStr), "%d/%d  %.1f%%", section->currentPage + 1, section->pageCount,
+                 bookProgress);
+        return std::string(progressStr);
+      },
+      [this, orientedMarginRight, orientedMarginLeft, showBatteryPercentage](
+          const ReaderActivityHelpers::StatusBarVisibility& statusBar, const int textY, const int progressTextWidth) {
+        // Centered chapter title text with fall-back to available-width centering for long titles.
+        const int rendererableScreenWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
+        const int batterySize = statusBar.showBattery ? (showBatteryPercentage ? 50 : 20) : 0;
+        const int titleMarginLeft = batterySize + 30;
+        const int titleMarginRight = progressTextWidth + 30;
 
-  if (showProgress) {
-    // Calculate progress in book
-    const float sectionChapterProg = static_cast<float>(section->currentPage) / section->pageCount;
-    const float bookProgress = epub->calculateProgress(currentSpineIndex, sectionChapterProg) * 100;
+        int titleMarginLeftAdjusted = std::max(titleMarginLeft, titleMarginRight);
+        int availableTitleSpace = rendererableScreenWidth - 2 * titleMarginLeftAdjusted;
+        const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
 
-    // Right aligned text for progress counter
-    char progressStr[32];
-    snprintf(progressStr, sizeof(progressStr), "%d/%d  %.1f%%", section->currentPage + 1, section->pageCount,
-             bookProgress);
-    const std::string progress = progressStr;
-    progressTextWidth = renderer.getTextWidth(SMALL_FONT_ID, progress.c_str());
-    renderer.drawText(SMALL_FONT_ID, renderer.getScreenWidth() - orientedMarginRight - progressTextWidth, textY,
-                      progress.c_str());
-  }
+        std::string title = "Unnamed";
+        if (tocIndex != -1) {
+          title = epub->getTocItem(tocIndex).title;
+          const int titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
+          if (titleWidth > availableTitleSpace) {
+            availableTitleSpace = rendererableScreenWidth - titleMarginLeft - titleMarginRight;
+            titleMarginLeftAdjusted = titleMarginLeft;
+          }
+        }
 
-  if (showBattery) {
-    ScreenComponents::drawBattery(renderer, orientedMarginLeft + 1, textY, showBatteryPercentage);
-  }
+        ReaderActivityHelpers::truncateWithEllipsisToFit(renderer, SMALL_FONT_ID, title, availableTitleSpace);
+        const int titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
 
-  if (showChapterTitle) {
-    // Centered chatper title text
-    // Page width minus existing content with 30px padding on each side
-    const int rendererableScreenWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
-
-    const int batterySize = showBattery ? (showBatteryPercentage ? 50 : 20) : 0;
-    const int titleMarginLeft = batterySize + 30;
-    const int titleMarginRight = progressTextWidth + 30;
-
-    // Attempt to center title on the screen, but if title is too wide then later we will center it within the
-    // available space.
-    int titleMarginLeftAdjusted = std::max(titleMarginLeft, titleMarginRight);
-    int availableTitleSpace = rendererableScreenWidth - 2 * titleMarginLeftAdjusted;
-    const int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
-
-    std::string title;
-    int titleWidth;
-    if (tocIndex == -1) {
-      title = "Unnamed";
-      titleWidth = renderer.getTextWidth(SMALL_FONT_ID, "Unnamed");
-    } else {
-      const auto tocItem = epub->getTocItem(tocIndex);
-      title = tocItem.title;
-      titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
-      if (titleWidth > availableTitleSpace) {
-        // Not enough space to center on the screen, center it within the remaining space instead
-        availableTitleSpace = rendererableScreenWidth - titleMarginLeft - titleMarginRight;
-        titleMarginLeftAdjusted = titleMarginLeft;
-      }
-      while (titleWidth > availableTitleSpace && title.length() > 11) {
-        title.replace(title.length() - 8, 8, "...");
-        titleWidth = renderer.getTextWidth(SMALL_FONT_ID, title.c_str());
-      }
-    }
-
-    renderer.drawText(SMALL_FONT_ID,
-                      titleMarginLeftAdjusted + orientedMarginLeft + (availableTitleSpace - titleWidth) / 2, textY,
-                      title.c_str());
-  }
+        renderer.drawText(SMALL_FONT_ID,
+                          titleMarginLeftAdjusted + orientedMarginLeft + (availableTitleSpace - titleWidth) / 2, textY,
+                          title.c_str());
+      });
 }

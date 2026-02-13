@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+
 #include <Epub.h>
 #include <Epub/Section.h>
 #include <freertos/FreeRTOS.h>
@@ -15,6 +17,10 @@ class EpubReaderActivity final : public ActivityWithSubactivity {
   SemaphoreHandle_t renderingMutex = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
+  int progressRestoreSpineIndex = -1;
+  uint16_t progressRestoreSectionPageCount = 0;
+  bool hasPendingProgressRestore = false;
+  bool hasProgressRestoreSectionPageCount = false;
   int pagesUntilFullRefresh = 0;
   bool updateRequired = false;
   // Long-press state machine

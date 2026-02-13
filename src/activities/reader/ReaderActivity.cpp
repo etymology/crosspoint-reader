@@ -7,40 +7,25 @@
 #include "TxtReaderActivity.h"
 #include "Xtc.h"
 #include "XtcReaderActivity.h"
-#include "CrossPointSettings.h"
+#include "ReaderActivityHelpers.h"
 #include "activities/util/FullScreenMessageActivity.h"
 #include "fontIds.h"
 #include "util/StringUtils.h"
 
 namespace {
-GfxRenderer::Orientation getReaderOrientation() {
-  switch (SETTINGS.orientation) {
-    case CrossPointSettings::ORIENTATION::PORTRAIT:
-      return GfxRenderer::Orientation::Portrait;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CW:
-      return GfxRenderer::Orientation::LandscapeClockwise;
-    case CrossPointSettings::ORIENTATION::INVERTED:
-      return GfxRenderer::Orientation::PortraitInverted;
-    case CrossPointSettings::ORIENTATION::LANDSCAPE_CCW:
-      return GfxRenderer::Orientation::LandscapeCounterClockwise;
-    default:
-      return GfxRenderer::Orientation::Portrait;
-  }
-}
-
 void renderPreparingFirstReadBox(GfxRenderer& renderer) {
   const auto prevOrientation = renderer.getOrientation();
-  renderer.setOrientation(getReaderOrientation());
+  renderer.setOrientation(ReaderActivityHelpers::getReaderOrientation());
 
   constexpr int boxMargin = 20;
   constexpr int boxY = 50;
-  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, "Preparing metadata");
+  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, "Preparing metadata...");
   const int boxWidth = textWidth + boxMargin * 2;
   const int boxHeight = renderer.getLineHeight(UI_12_FONT_ID) + boxMargin * 2;
   const int boxX = (renderer.getScreenWidth() - boxWidth) / 2;
 
   renderer.fillRect(boxX, boxY, boxWidth, boxHeight, false);
-  renderer.drawText(UI_12_FONT_ID, boxX + boxMargin, boxY + boxMargin, "Preparing metadata");
+  renderer.drawText(UI_12_FONT_ID, boxX + boxMargin, boxY + boxMargin, "Preparing metadata...");
   renderer.drawRect(boxX + 5, boxY + 5, boxWidth - 10, boxHeight - 10);
   renderer.displayBuffer();
 
