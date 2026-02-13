@@ -2,12 +2,30 @@
 
 #include "Epub.h"
 #include "EpubReaderActivity.h"
+#include "GfxRenderer.h"
 #include "Txt.h"
 #include "TxtReaderActivity.h"
 #include "Xtc.h"
 #include "XtcReaderActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
+#include "fontIds.h"
 #include "util/StringUtils.h"
+
+namespace {
+void renderPreparingFirstReadBox(GfxRenderer& renderer) {
+  constexpr int boxMargin = 20;
+  constexpr int boxY = 50;
+  const int textWidth = renderer.getTextWidth(UI_12_FONT_ID, "Preparing metadata...");
+  const int boxWidth = textWidth + boxMargin * 2;
+  const int boxHeight = renderer.getLineHeight(UI_12_FONT_ID) + boxMargin * 2;
+  const int boxX = (renderer.getScreenWidth() - boxWidth) / 2;
+
+  renderer.fillRect(boxX, boxY, boxWidth, boxHeight, false);
+  renderer.drawText(UI_12_FONT_ID, boxX + boxMargin, boxY + boxMargin, "Preparing metadata...");
+  renderer.drawRect(boxX + 5, boxY + 5, boxWidth - 10, boxHeight - 10);
+  renderer.displayBuffer();
+}
+}  // namespace
 
 std::string ReaderActivity::extractFolderPath(const std::string& filePath) {
   const auto lastSlash = filePath.find_last_of('/');
@@ -27,14 +45,21 @@ bool ReaderActivity::isTxtFile(const std::string& path) {
   return ext4 == ".txt" || ext4 == ".TXT";
 }
 
-std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
+std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path, GfxRenderer& renderer) {
   if (!SdMan.exists(path.c_str())) {
     Serial.printf("[%lu] [   ] File does not exist: %s\n", millis(), path.c_str());
     return nullptr;
   }
 
   auto epub = std::unique_ptr<Epub>(new Epub(path, "/.crosspoint"));
-  if (epub->load()) {
+  // First try cache-only load. If it fails, we're about to do metadata/cache build.
+  if (epub->load(false)) {
+    return epub;
+  }
+
+  renderPreparingFirstReadBox(renderer);
+
+  if (epub->load(true)) {
     return epub;
   }
 
@@ -127,7 +152,7 @@ void ReaderActivity::onEnter() {
     }
     onGoToTxtReader(std::move(txt));
   } else {
-    auto epub = loadEpub(initialBookPath);
+    auto epub = loadEpub(initialBookPath, renderer);
     if (!epub) {
       onGoBack();
       return;

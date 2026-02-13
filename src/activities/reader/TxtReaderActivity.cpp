@@ -201,8 +201,9 @@ void TxtReaderActivity::buildPageIndex() {
   renderer.drawText(UI_12_FONT_ID, boxX + boxMargin, boxY + boxMargin, "Indexing...");
   renderer.drawRect(boxX + 5, boxY + 5, boxWidth - 10, boxHeight - 10);
   renderer.drawRect(barX, barY, barWidth, barHeight);
-  renderer.displayBuffer();
+  renderer.displayWindowAsync(boxX, boxY, boxWidth, boxHeight);
 
+  int lastFillWidth = 0;
   while (offset < fileSize) {
     std::vector<std::string> tempLines;
     size_t nextOffset = offset;
@@ -228,8 +229,14 @@ void TxtReaderActivity::buildPageIndex() {
 
       // Fill progress bar
       const int fillWidth = (barWidth - 2) * progressPercent / 100;
-      renderer.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, true);
-      renderer.displayBuffer(EInkDisplay::FAST_REFRESH);
+      if (fillWidth > lastFillWidth) {
+        const int deltaWidth = fillWidth - lastFillWidth;
+        renderer.fillRect(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2, true);
+        if (renderer.displayWindowAsync(barX + 1 + lastFillWidth, barY + 1, deltaWidth, barHeight - 2)) {
+          lastFillWidth = fillWidth;
+        }
+      }
+      yield();
     }
 
     // Yield to other tasks periodically

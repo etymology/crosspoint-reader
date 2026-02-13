@@ -28,6 +28,7 @@ class GfxRenderer {
   EInkDisplay& einkDisplay;
   RenderMode renderMode;
   Orientation orientation;
+  mutable bool frameBufferDirty;
   uint8_t* bwBufferChunks[BW_BUFFER_NUM_CHUNKS] = {nullptr};
   std::map<int, EpdFontFamily> fontMap;
   void renderChar(const EpdFontFamily& fontFamily, uint32_t cp, int* x, const int* y, bool pixelState,
@@ -36,7 +37,8 @@ class GfxRenderer {
   void rotateCoordinates(int x, int y, int* rotatedX, int* rotatedY) const;
 
  public:
-  explicit GfxRenderer(EInkDisplay& einkDisplay) : einkDisplay(einkDisplay), renderMode(BW), orientation(Portrait) {}
+  explicit GfxRenderer(EInkDisplay& einkDisplay)
+      : einkDisplay(einkDisplay), renderMode(BW), orientation(Portrait), frameBufferDirty(true) {}
   ~GfxRenderer() { freeBwBufferChunks(); }
 
   static constexpr int VIEWABLE_MARGIN_TOP = 9;
@@ -57,6 +59,7 @@ class GfxRenderer {
   void displayBuffer(EInkDisplay::RefreshMode refreshMode = EInkDisplay::FAST_REFRESH) const;
   // EXPERIMENTAL: Windowed update - display only a rectangular region
   void displayWindow(int x, int y, int width, int height) const;
+  bool displayWindowAsync(int x, int y, int width, int height) const;
   void invertScreen() const;
   void clearScreen(uint8_t color = 0xFF) const;
 
@@ -107,5 +110,6 @@ class GfxRenderer {
   uint8_t* getFrameBuffer() const;
   static size_t getBufferSize();
   void grayscaleRevert() const;
+  void markDirty() const { frameBufferDirty = true; }
   void getOrientedViewableTRBL(int* outTop, int* outRight, int* outBottom, int* outLeft) const;
 };

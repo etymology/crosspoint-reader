@@ -146,6 +146,7 @@ bool HomeActivity::restoreCoverBuffer() {
 
   const size_t bufferSize = GfxRenderer::getBufferSize();
   memcpy(frameBuffer, coverBuffer, bufferSize);
+  renderer.markDirty();
   return true;
 }
 

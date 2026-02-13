@@ -14,7 +14,7 @@ class ReaderActivity final : public ActivityWithSubactivity {
   MyLibraryActivity::Tab libraryTab;  // Track which tab to return to
   const std::function<void()> onGoBack;
   const std::function<void(const std::string&, MyLibraryActivity::Tab)> onGoToLibrary;
-  static std::unique_ptr<Epub> loadEpub(const std::string& path);
+  static std::unique_ptr<Epub> loadEpub(const std::string& path, GfxRenderer& renderer);
   static std::unique_ptr<Xtc> loadXtc(const std::string& path);
   static std::unique_ptr<Txt> loadTxt(const std::string& path);
   static bool isXtcFile(const std::string& path);

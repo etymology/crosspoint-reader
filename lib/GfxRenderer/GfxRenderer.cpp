@@ -2,6 +2,107 @@
 
 #include <Utf8.h>
 
+namespace {
+bool mapWindowToPanelAlignedRect(const GfxRenderer::Orientation orientation, const int logicalWidth, const int logicalHeight,
+                                 int x, int y, int width, int height, uint16_t* outX, uint16_t* outY, uint16_t* outW,
+                                 uint16_t* outH) {
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  // Clip to logical screen coordinates first.
+  if (x >= logicalWidth || y >= logicalHeight) {
+    return false;
+  }
+  if (x < 0) {
+    width += x;
+    x = 0;
+  }
+  if (y < 0) {
+    height += y;
+    y = 0;
+  }
+  if (x + width > logicalWidth) {
+    width = logicalWidth - x;
+  }
+  if (y + height > logicalHeight) {
+    height = logicalHeight - y;
+  }
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+
+  int panelX = 0;
+  int panelY = 0;
+  int panelW = 0;
+  int panelH = 0;
+
+  // Map logical window rectangle to panel coordinates.
+  switch (orientation) {
+    case GfxRenderer::Portrait:
+      panelX = y;
+      panelY = EInkDisplay::DISPLAY_HEIGHT - x - width;
+      panelW = height;
+      panelH = width;
+      break;
+    case GfxRenderer::LandscapeClockwise:
+      panelX = EInkDisplay::DISPLAY_WIDTH - x - width;
+      panelY = EInkDisplay::DISPLAY_HEIGHT - y - height;
+      panelW = width;
+      panelH = height;
+      break;
+    case GfxRenderer::PortraitInverted:
+      panelX = EInkDisplay::DISPLAY_WIDTH - y - height;
+      panelY = x;
+      panelW = height;
+      panelH = width;
+      break;
+    case GfxRenderer::LandscapeCounterClockwise:
+      panelX = x;
+      panelY = y;
+      panelW = width;
+      panelH = height;
+      break;
+  }
+
+  // Clip to panel bounds.
+  if (panelX < 0) {
+    panelW += panelX;
+    panelX = 0;
+  }
+  if (panelY < 0) {
+    panelH += panelY;
+    panelY = 0;
+  }
+  if (panelX + panelW > EInkDisplay::DISPLAY_WIDTH) {
+    panelW = EInkDisplay::DISPLAY_WIDTH - panelX;
+  }
+  if (panelY + panelH > EInkDisplay::DISPLAY_HEIGHT) {
+    panelH = EInkDisplay::DISPLAY_HEIGHT - panelY;
+  }
+  if (panelW <= 0 || panelH <= 0) {
+    return false;
+  }
+
+  // SSD1677 window writes require x/width to be byte-aligned.
+  const int alignedX = panelX & ~0x07;
+  int alignedXEnd = (panelX + panelW + 7) & ~0x07;
+  if (alignedXEnd > EInkDisplay::DISPLAY_WIDTH) {
+    alignedXEnd = EInkDisplay::DISPLAY_WIDTH;
+  }
+  const int alignedW = alignedXEnd - alignedX;
+  if (alignedW <= 0) {
+    return false;
+  }
+
+  *outX = static_cast<uint16_t>(alignedX);
+  *outY = static_cast<uint16_t>(panelY);
+  *outW = static_cast<uint16_t>(alignedW);
+  *outH = static_cast<uint16_t>(panelH);
+  return true;
+}
+}  // namespace
+
 void GfxRenderer::insertFont(const int fontId, EpdFontFamily font) { fontMap.insert({fontId, font}); }
 
 void GfxRenderer::rotateCoordinates(const int x, const int y, int* rotatedX, int* rotatedY) const {
@@ -58,12 +159,21 @@ void GfxRenderer::drawPixel(const int x, const int y, const bool state) const {
   // Calculate byte position and bit position
   const uint16_t byteIndex = rotatedY * EInkDisplay::DISPLAY_WIDTH_BYTES + (rotatedX / 8);
   const uint8_t bitPosition = 7 - (rotatedX % 8);  // MSB first
+  const uint8_t mask = static_cast<uint8_t>(1U << bitPosition);
 
   if (state) {
-    frameBuffer[byteIndex] &= ~(1 << bitPosition);  // Clear bit
+    if ((frameBuffer[byteIndex] & mask) == 0) {
+      return;
+    }
+    frameBuffer[byteIndex] &= static_cast<uint8_t>(~mask);  // Clear bit
   } else {
-    frameBuffer[byteIndex] |= 1 << bitPosition;  // Set bit
+    if ((frameBuffer[byteIndex] & mask) != 0) {
+      return;
+    }
+    frameBuffer[byteIndex] |= mask;  // Set bit
   }
+
+  frameBufferDirty = true;
 }
 
 int GfxRenderer::getTextWidth(const int fontId, const char* text, const EpdFontFamily::Style style) const {
@@ -150,6 +260,7 @@ void GfxRenderer::drawImage(const uint8_t bitmap[], const int x, const int y, co
   int rotatedY = 0;
   rotateCoordinates(x, y, &rotatedX, &rotatedY);
   einkDisplay.drawImage(bitmap, rotatedX, rotatedY, width, height);
+  frameBufferDirty = true;
 }
 
 void GfxRenderer::drawBitmap(const Bitmap& bitmap, const int x, const int y, const int maxWidth, const int maxHeight,
@@ -384,7 +495,10 @@ void GfxRenderer::fillPolygon(const int* xPoints, const int* yPoints, int numPoi
   free(nodeX);
 }
 
-void GfxRenderer::clearScreen(const uint8_t color) const { einkDisplay.clearScreen(color); }
+void GfxRenderer::clearScreen(const uint8_t color) const {
+  einkDisplay.clearScreen(color);
+  frameBufferDirty = true;
+}
 
 void GfxRenderer::invertScreen() const {
   uint8_t* buffer = einkDisplay.getFrameBuffer();
@@ -395,10 +509,54 @@ void GfxRenderer::invertScreen() const {
   for (int i = 0; i < EInkDisplay::BUFFER_SIZE; i++) {
     buffer[i] = ~buffer[i];
   }
+  frameBufferDirty = true;
 }
 
 void GfxRenderer::displayBuffer(const EInkDisplay::RefreshMode refreshMode) const {
+  if (!frameBufferDirty && refreshMode == EInkDisplay::FAST_REFRESH) {
+    return;
+  }
   einkDisplay.displayBuffer(refreshMode);
+  frameBufferDirty = false;
+}
+
+void GfxRenderer::displayWindow(int x, int y, int width, int height) const {
+  uint16_t panelX = 0;
+  uint16_t panelY = 0;
+  uint16_t panelW = 0;
+  uint16_t panelH = 0;
+  if (!mapWindowToPanelAlignedRect(orientation, getScreenWidth(), getScreenHeight(), x, y, width, height, &panelX, &panelY,
+                                   &panelW, &panelH)) {
+    return;
+  }
+
+  einkDisplay.displayWindow(panelX, panelY, panelW, panelH);
+
+  if (panelX == 0 && panelY == 0 && panelW == EInkDisplay::DISPLAY_WIDTH && panelH == EInkDisplay::DISPLAY_HEIGHT) {
+    frameBufferDirty = false;
+  }
+}
+
+bool GfxRenderer::displayWindowAsync(int x, int y, int width, int height) const {
+  uint16_t panelX = 0;
+  uint16_t panelY = 0;
+  uint16_t panelW = 0;
+  uint16_t panelH = 0;
+  if (!mapWindowToPanelAlignedRect(orientation, getScreenWidth(), getScreenHeight(), x, y, width, height, &panelX, &panelY,
+                                   &panelW, &panelH)) {
+    return false;
+  }
+
+  const bool started = einkDisplay.displayWindowAsync(panelX, panelY, panelW, panelH);
+  if (!started) {
+    return false;
+  }
+
+  if (panelX == 0 && panelY == 0 && panelW == EInkDisplay::DISPLAY_WIDTH && panelH == EInkDisplay::DISPLAY_HEIGHT) {
+    frameBufferDirty = false;
+  }
+
+  return true;
 }
 
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
@@ -739,6 +897,7 @@ void GfxRenderer::restoreBwBuffer() {
     const size_t offset = i * BW_BUFFER_CHUNK_SIZE;
     memcpy(frameBuffer + offset, bwBufferChunks[i], BW_BUFFER_CHUNK_SIZE);
   }
+  frameBufferDirty = true;
 
   einkDisplay.cleanupGrayscaleBuffers(frameBuffer);
 
