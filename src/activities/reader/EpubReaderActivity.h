@@ -21,6 +21,7 @@ class EpubReaderActivity final : public ActivityWithSubactivity {
   uint16_t progressRestoreSectionPageCount = 0;
   bool hasPendingProgressRestore = false;
   bool hasProgressRestoreSectionPageCount = false;
+  uint8_t sectionBuildRetryCount = 0;
   int pagesUntilFullRefresh = 0;
   bool updateRequired = false;
   // Long-press state machine

@@ -21,6 +21,7 @@ namespace {
 constexpr int statusBarMargin = 19;
 constexpr size_t legacyProgressSize = 4;
 constexpr size_t progressSizeWithSectionPageCount = 6;
+constexpr uint8_t maxSectionBuildRetries = 2;
 
 int mapPageBySectionPortion(const int savedPage, const uint16_t savedPageCount, const uint16_t targetPageCount) {
   if (targetPageCount == 0 || targetPageCount == 1 || savedPageCount <= 1) {
@@ -315,6 +316,9 @@ void EpubReaderActivity::renderScreen() {
 
       auto progressBox = ReaderActivityHelpers::makeIndexingProgressBox(renderer);
 
+      // Clear any prior transitional status UI (e.g. "Preparing metadata...").
+      renderer.clearScreen();
+
       // Always show "Indexing..." text first
       {
         ReaderActivityHelpers::drawIndexingProgressTextOnly(renderer, progressBox);
@@ -338,10 +342,26 @@ void EpubReaderActivity::renderScreen() {
                                       viewportHeight, SETTINGS.hyphenationEnabled, progressSetup, progressCallback)) {
         Serial.printf("[%lu] [ERS] Failed to persist page data to SD\n", millis());
         section.reset();
+        if (sectionBuildRetryCount < maxSectionBuildRetries) {
+          sectionBuildRetryCount++;
+          Serial.printf("[%lu] [ERS] Retrying section build (%u/%u)\n", millis(), sectionBuildRetryCount,
+                        maxSectionBuildRetries);
+          updateRequired = true;
+          vTaskDelay(30 / portTICK_PERIOD_MS);
+          return;
+        }
+
+        sectionBuildRetryCount = 0;
+        renderer.clearScreen();
+        renderer.drawCenteredText(UI_12_FONT_ID, 300, "Failed to index section", true, EpdFontFamily::BOLD);
+        renderer.drawCenteredText(SMALL_FONT_ID, 325, "Press page key to retry");
+        renderer.displayBuffer(EInkDisplay::HALF_REFRESH);
         return;
       }
+      sectionBuildRetryCount = 0;
       sectionReindexed = true;
     } else {
+      sectionBuildRetryCount = 0;
       Serial.printf("[%lu] [ERS] Cache found, skipping build...\n", millis());
     }
 
