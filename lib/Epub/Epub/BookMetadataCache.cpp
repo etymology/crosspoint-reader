@@ -21,6 +21,8 @@ bool BookMetadataCache::beginWrite() {
   buildMode = true;
   spineCount = 0;
   tocCount = 0;
+  spineHrefToIndex.clear();
+  firstTocIndexBySpine.clear();
   Serial.printf("[%lu] [BMC] Entering write mode\n", millis());
   return true;
 }
@@ -48,12 +50,21 @@ bool BookMetadataCache::beginTocPass() {
     spineFile.close();
     return false;
   }
+
+  spineHrefToIndex.clear();
+  firstTocIndexBySpine.assign(spineCount, -1);
+  spineFile.seek(0);
+  for (int i = 0; i < spineCount; i++) {
+    const auto spineEntry = readSpineEntry(spineFile);
+    spineHrefToIndex[spineEntry.href] = i;
+  }
   return true;
 }
 
 bool BookMetadataCache::endTocPass() {
   tocFile.close();
   spineFile.close();
+  spineHrefToIndex.clear();
   return true;
 }
 
@@ -150,21 +161,16 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   for (int i = 0; i < spineCount; i++) {
     auto spineEntry = readSpineEntry(spineFile);
 
-    tocFile.seek(0);
-    for (int j = 0; j < tocCount; j++) {
-      auto tocEntry = readTocEntry(tocFile);
-      if (tocEntry.spineIndex == i) {
-        spineEntry.tocIndex = j;
-        break;
-      }
+    if (i >= 0 && static_cast<size_t>(i) < firstTocIndexBySpine.size()) {
+      spineEntry.tocIndex = firstTocIndexBySpine[i];
     }
 
     // Not a huge deal if we don't fine a TOC entry for the spine entry, this is expected behaviour for EPUBs
     // Logging here is for debugging
     if (spineEntry.tocIndex == -1) {
-      Serial.printf(
-          "[%lu] [BMC] Warning: Could not find TOC entry for spine item %d: %s, using title from last section\n",
-          millis(), i, spineEntry.href.c_str());
+      // Serial.printf(
+      //     "[%lu] [BMC] Warning: Could not find TOC entry for spine item %d: %s, using title from last section\n",
+      //     millis(), i, spineEntry.href.c_str());
       spineEntry.tocIndex = lastSpineTocIndex;
     }
     lastSpineTocIndex = spineEntry.tocIndex;
@@ -195,6 +201,7 @@ bool BookMetadataCache::buildBookBin(const std::string& epubPath, const BookMeta
   bookFile.close();
   spineFile.close();
   tocFile.close();
+  firstTocIndexBySpine.clear();
 
   Serial.printf("[%lu] [BMC] Successfully built book.bin\n", millis());
   return true;
@@ -243,22 +250,15 @@ void BookMetadataCache::createSpineEntry(const std::string& href) {
 
 void BookMetadataCache::createTocEntry(const std::string& title, const std::string& href, const std::string& anchor,
                                        const uint8_t level) {
-  if (!buildMode || !tocFile || !spineFile) {
+  if (!buildMode || !tocFile) {
     Serial.printf("[%lu] [BMC] createTocEntry called but not in build mode\n", millis());
     return;
   }
 
   int spineIndex = -1;
-  // find spine index
-  // TODO: This lookup is slow as need to scan through all items each time. We can't hold it all in memory due to size.
-  //       But perhaps we can load just the hrefs in a vector/list to do an index lookup?
-  spineFile.seek(0);
-  for (int i = 0; i < spineCount; i++) {
-    auto spineEntry = readSpineEntry(spineFile);
-    if (spineEntry.href == href) {
-      spineIndex = i;
-      break;
-    }
+  const auto spineIt = spineHrefToIndex.find(href);
+  if (spineIt != spineHrefToIndex.end()) {
+    spineIndex = spineIt->second;
   }
 
   if (spineIndex == -1) {
@@ -267,6 +267,10 @@ void BookMetadataCache::createTocEntry(const std::string& title, const std::stri
 
   const TocEntry entry(title, href, anchor, level, spineIndex);
   writeTocEntry(tocFile, entry);
+  if (spineIndex >= 0 && static_cast<size_t>(spineIndex) < firstTocIndexBySpine.size() &&
+      firstTocIndexBySpine[spineIndex] == -1) {
+    firstTocIndexBySpine[spineIndex] = tocCount;
+  }
   tocCount++;
 }
 

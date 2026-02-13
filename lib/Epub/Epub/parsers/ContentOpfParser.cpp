@@ -114,6 +114,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_MANIFEST;
+    self->itemIdToHrefOffset.clear();
     if (!SdMan.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       Serial.printf(
           "[%lu] [COF] Couldn't open temp items file for writing. This is probably going to be a fatal error.\n",
@@ -182,7 +183,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
     // Write items down to SD card
     serialization::writeString(self->tempItemStore, itemId);
+    const uint32_t hrefOffset = self->tempItemStore.position();
     serialization::writeString(self->tempItemStore, href);
+    self->itemIdToHrefOffset[itemId] = hrefOffset;
 
     if (itemId == self->coverItemId) {
       self->coverItemHref = href;
@@ -215,19 +218,12 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "idref") == 0) {
           const std::string idref = atts[i + 1];
-          // Resolve the idref to href using items map
-          // TODO: This lookup is slow as need to scan through all items each time.
-          //       It can take up to 200ms per item when getting to 1500 items.
-          self->tempItemStore.seek(0);
-          std::string itemId;
-          std::string href;
-          while (self->tempItemStore.available()) {
-            serialization::readString(self->tempItemStore, itemId);
+          const auto it = self->itemIdToHrefOffset.find(idref);
+          if (it != self->itemIdToHrefOffset.end()) {
+            self->tempItemStore.seek(it->second);
+            std::string href;
             serialization::readString(self->tempItemStore, href);
-            if (itemId == idref) {
-              self->cache->createSpineEntry(href);
-              break;
-            }
+            self->cache->createSpineEntry(href);
           }
         }
       }

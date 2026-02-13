@@ -1,6 +1,8 @@
 #pragma once
 #include <Print.h>
 
+#include <unordered_map>
+
 #include "Epub.h"
 #include "expat.h"
 
@@ -26,6 +28,7 @@ class ContentOpfParser final : public Print {
   ParserState state = START;
   BookMetadataCache* cache;
   FsFile tempItemStore;
+  std::unordered_map<std::string, uint32_t> itemIdToHrefOffset;
   std::string coverItemId;
 
   static void startElement(void* userData, const XML_Char* name, const XML_Char** atts);

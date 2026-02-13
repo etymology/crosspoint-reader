@@ -3,6 +3,8 @@
 #include <SDCardManager.h>
 
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 class BookMetadataCache {
  public:
@@ -52,6 +54,8 @@ class BookMetadataCache {
   // Temp file handles during build
   FsFile spineFile;
   FsFile tocFile;
+  std::unordered_map<std::string, int16_t> spineHrefToIndex;
+  std::vector<int16_t> firstTocIndexBySpine;
 
   uint32_t writeSpineEntry(FsFile& file, const SpineEntry& entry) const;
   uint32_t writeTocEntry(FsFile& file, const TocEntry& entry) const;
