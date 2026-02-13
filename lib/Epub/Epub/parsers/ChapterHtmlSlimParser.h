@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 
+#include "../EpubProcessingProfile.h"
 #include "../ParsedText.h"
 #include "../blocks/TextBlock.h"
 #include "../css/CssParser.h"
@@ -40,6 +41,9 @@ class ChapterHtmlSlimParser {
   uint8_t paragraphAlignment;
   uint16_t viewportWidth;
   uint16_t viewportHeight;
+  int lineHeightPx = 0;
+  float emSizePx = 0;
+  EpubProcessingProfile processingProfile;
   bool hyphenationEnabled;
   const CssParser* cssParser;
   bool embeddedStyle;
@@ -74,7 +78,8 @@ class ChapterHtmlSlimParser {
                                  const uint16_t viewportHeight, const bool hyphenationEnabled,
                                  const std::function<void(std::unique_ptr<Page>)>& completePageFn,
                                  const bool embeddedStyle, const std::function<void()>& popupFn = nullptr,
-                                 const CssParser* cssParser = nullptr)
+                                 const CssParser* cssParser = nullptr,
+                                 const EpubProcessingProfile& processingProfile = EpubProcessingProfile::optimized())
 
       : filepath(filepath),
         renderer(renderer),
@@ -84,6 +89,7 @@ class ChapterHtmlSlimParser {
         paragraphAlignment(paragraphAlignment),
         viewportWidth(viewportWidth),
         viewportHeight(viewportHeight),
+        processingProfile(processingProfile),
         hyphenationEnabled(hyphenationEnabled),
         completePageFn(completePageFn),
         popupFn(popupFn),

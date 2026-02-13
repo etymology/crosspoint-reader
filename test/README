@@ -9,3 +9,35 @@ in the development cycle.
 
 More information about PlatformIO Unit Testing:
 - https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+
+On-platform EPUB performance benchmark:
+- Test folder: `test/test_on_platform_epub_perf`
+- Default test book path: `/perf_large.epub` on SD card
+- Run (auto port): `pio test -e perf_benchmark`
+- Run (explicit port): `pio test -e perf_benchmark --upload-port /dev/cu.usbmodemXXXX --test-port /dev/cu.usbmodemXXXX`
+- Optional book override:
+  `pio test -e perf_benchmark --project-option="build_flags=-DEPUB_PERF_TEST_BOOK_PATH=\\\"/path/to/large.epub\\\""`
+
+On-platform display refresh performance benchmark:
+- Test folder: `test/test_on_platform_display_perf`
+- Covers combinations of:
+  - B/W image + full refresh
+  - B/W image + half refresh
+  - Gray image flow + full-refresh base pass
+  - Gray image flow + half-refresh base pass
+- Run (auto port): `pio test -e display_perf_benchmark`
+- Run (explicit port): `pio test -e display_perf_benchmark --upload-port /dev/cu.usbmodemXXXX --test-port /dev/cu.usbmodemXXXX`
+- Optional trial count override:
+  `pio test -e display_perf_benchmark --project-option="build_flags=-DDISPLAY_PERF_TRIALS=5"`
+
+Display driver baseline vs optimized comparison:
+- Baseline env: `display_perf_baseline` (`-DEINK_DISPLAY_FORCE_BASELINE=1`)
+- Optimized env: `display_perf_optimized`
+- Run baseline only:
+  `pio test -e display_perf_baseline --upload-port /dev/cu.usbmodemXXXX --test-port /dev/cu.usbmodemXXXX`
+- Run optimized only:
+  `pio test -e display_perf_optimized --upload-port /dev/cu.usbmodemXXXX --test-port /dev/cu.usbmodemXXXX`
+- Run A/B compare (runs both, parses medians, reports deltas):
+  `test/run_display_driver_compare.sh /dev/cu.usbmodemXXXX`
+- Optional slowdown tolerance for CI/scripts (default `0`):
+  `ALLOW_SLOWDOWN_PERCENT=3 test/run_display_driver_compare.sh /dev/cu.usbmodemXXXX`

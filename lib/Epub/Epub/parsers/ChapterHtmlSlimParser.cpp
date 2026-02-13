@@ -213,7 +213,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     }
   }
 
-  const float emSize = static_cast<float>(self->renderer.getLineHeight(self->fontId)) * self->lineCompression;
+  const float emSize = self->processingProfile.cacheLineMetrics
+                           ? self->emSizePx
+                           : static_cast<float>(self->renderer.getLineHeight(self->fontId)) * self->lineCompression;
   const auto userAlignmentBlockStyle = BlockStyle::fromCssStyle(
       cssStyle, emSize, static_cast<CssTextAlign>(self->paragraphAlignment), self->viewportWidth);
 
@@ -503,6 +505,11 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
 }
 
 bool ChapterHtmlSlimParser::parseAndBuildPages() {
+  if (processingProfile.cacheLineMetrics) {
+    lineHeightPx = static_cast<int>(renderer.getLineHeight(fontId) * lineCompression);
+    emSizePx = static_cast<float>(renderer.getLineHeight(fontId)) * lineCompression;
+  }
+
   auto paragraphAlignmentBlockStyle = BlockStyle();
   paragraphAlignmentBlockStyle.textAlignDefined = true;
   // Resolve None sentinel to Justify for initial block (no CSS context yet)
@@ -538,9 +545,10 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);
   XML_SetCharacterDataHandler(parser, characterData);
+  const size_t parseChunkSize = processingProfile.parseChunkSizeOrDefault();
 
   do {
-    void* const buf = XML_GetBuffer(parser, 1024);
+    void* const buf = XML_GetBuffer(parser, parseChunkSize);
     if (!buf) {
       LOG_ERR("EHP", "Couldn't allocate memory for buffer");
       XML_StopParser(parser, XML_FALSE);                // Stop any pending processing
@@ -551,7 +559,7 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
       return false;
     }
 
-    const size_t len = file.read(buf, 1024);
+    const size_t len = file.read(buf, parseChunkSize);
 
     if (len == 0 && file.available() > 0) {
       LOG_ERR("EHP", "File read error");
@@ -595,7 +603,9 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
 }
 
 void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
-  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
+  const int lineHeight = processingProfile.cacheLineMetrics
+                             ? lineHeightPx
+                             : static_cast<int>(renderer.getLineHeight(fontId) * lineCompression);
 
   if (currentPageNextY + lineHeight > viewportHeight) {
     completePageFn(std::move(currentPage));
@@ -619,8 +629,6 @@ void ChapterHtmlSlimParser::makePages() {
     currentPage.reset(new Page());
     currentPageNextY = 0;
   }
-
-  const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
 
   // Apply top spacing before the paragraph (stored in pixels)
   const BlockStyle& blockStyle = currentTextBlock->getBlockStyle();
@@ -650,6 +658,9 @@ void ChapterHtmlSlimParser::makePages() {
 
   // Extra paragraph spacing if enabled (default behavior)
   if (extraParagraphSpacing) {
+    const int lineHeight = processingProfile.cacheLineMetrics
+                               ? lineHeightPx
+                               : static_cast<int>(renderer.getLineHeight(fontId) * lineCompression);
     currentPageNextY += lineHeight / 2;
   }
 }

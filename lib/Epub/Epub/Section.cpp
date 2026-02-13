@@ -26,7 +26,10 @@ uint32_t Section::onPageComplete(std::unique_ptr<Page> page) {
     LOG_ERR("SCT", "Failed to serialize page %d", pageCount);
     return 0;
   }
-  LOG_DBG("SCT", "Page %d processed", pageCount);
+  const uint16_t logInterval = processingProfile.pageProcessLogInterval;
+  if (logInterval > 0 && (pageCount == 0 || ((pageCount + 1) % logInterval) == 0)) {
+    LOG_DBG("SCT", "Page %d processed", pageCount);
+  }
 
   pageCount++;
   return position;
@@ -128,7 +131,8 @@ bool Section::clearCache() const {
 bool Section::createSectionFile(const int fontId, const float lineCompression, const bool extraParagraphSpacing,
                                 const uint8_t paragraphAlignment, const uint16_t viewportWidth,
                                 const uint16_t viewportHeight, const bool hyphenationEnabled, const bool embeddedStyle,
-                                const std::function<void()>& popupFn) {
+                                const std::function<void()>& popupFn, const EpubProcessingProfile& profile) {
+  processingProfile = profile;
   const auto localPath = epub->getSpineItem(spineIndex).href;
   const auto tmpHtmlPath = epub->getCachePath() + "/.tmp_" + std::to_string(spineIndex) + ".html";
 
@@ -156,7 +160,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     if (!Storage.openFileForWrite("SCT", tmpHtmlPath, tmpHtml)) {
       continue;
     }
-    success = epub->readItemContentsToStream(localPath, tmpHtml, 1024);
+    success = epub->readItemContentsToStream(localPath, tmpHtml, processingProfile.sectionChunkSizeOrDefault());
     fileSize = tmpHtml.size();
     tmpHtml.close();
 
@@ -185,7 +189,7 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
       tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
       viewportHeight, hyphenationEnabled,
       [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); },
-      embeddedStyle, popupFn, embeddedStyle ? epub->getCssParser() : nullptr);
+      embeddedStyle, popupFn, embeddedStyle ? epub->getCssParser() : nullptr, processingProfile);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   success = visitor.parseAndBuildPages();
 

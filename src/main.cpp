@@ -129,6 +129,10 @@ EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 unsigned long t1 = 0;
 unsigned long t2 = 0;
 
+#ifndef KEEP_AWAKE_ON_USB_POWER
+#define KEEP_AWAKE_ON_USB_POWER 0
+#endif
+
 void exitActivity() {
   if (currentActivity) {
     currentActivity->onExit();
@@ -317,8 +321,13 @@ void setup() {
     case HalGPIO::WakeupReason::AfterUSBPower:
       // If USB power caused a cold boot, go back to sleep
       LOG_DBG("MAIN", "Wakeup reason: After USB Power");
+#if KEEP_AWAKE_ON_USB_POWER
+      LOG_DBG("MAIN", "KEEP_AWAKE_ON_USB_POWER=1, staying awake for serial/debug access");
+      break;
+#else
       gpio.startDeepSleep();
       break;
+#endif
     case HalGPIO::WakeupReason::AfterFlash:
       // After flashing, just proceed to boot
     case HalGPIO::WakeupReason::Other:

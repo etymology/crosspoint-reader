@@ -2,6 +2,7 @@
 #include <functional>
 #include <memory>
 
+#include "EpubProcessingProfile.h"
 #include "Epub.h"
 
 class Page;
@@ -13,6 +14,7 @@ class Section {
   GfxRenderer& renderer;
   std::string filePath;
   FsFile file;
+  EpubProcessingProfile processingProfile = EpubProcessingProfile::optimized();
 
   void writeSectionFileHeader(int fontId, float lineCompression, bool extraParagraphSpacing, uint8_t paragraphAlignment,
                               uint16_t viewportWidth, uint16_t viewportHeight, bool hyphenationEnabled,
@@ -34,6 +36,7 @@ class Section {
   bool clearCache() const;
   bool createSectionFile(int fontId, float lineCompression, bool extraParagraphSpacing, uint8_t paragraphAlignment,
                          uint16_t viewportWidth, uint16_t viewportHeight, bool hyphenationEnabled, bool embeddedStyle,
-                         const std::function<void()>& popupFn = nullptr);
+                         const std::function<void()>& popupFn = nullptr,
+                         const EpubProcessingProfile& profile = EpubProcessingProfile::optimized());
   std::unique_ptr<Page> loadPageFromSectionFile();
 };
