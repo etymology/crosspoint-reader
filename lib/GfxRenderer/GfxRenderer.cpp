@@ -658,6 +658,9 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const
   auto elapsed = millis() - start_ms;
   LOG_DBG("GFX", "Time = %lu ms from clearScreen to displayBuffer", elapsed);
   display.displayBuffer(refreshMode, fadingFix);
+  // In dual-buffer display mode, the driver may swap backing framebuffers during displayBuffer().
+  // Keep renderer's cached pointer in sync so subsequent draws target the active draw buffer.
+  frameBuffer = display.getFrameBuffer();
 }
 
 void GfxRenderer::displayWindow(const int x, const int y, const int width, const int height) const {

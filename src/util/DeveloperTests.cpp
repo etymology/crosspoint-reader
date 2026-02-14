@@ -77,6 +77,10 @@ void runDisplayResponseTest(GfxRenderer& renderer, MappedInputManager& mappedInp
   fillCheckerboard(renderer, pageWidth, pageHeight, tileSize);
   renderer.drawCenteredText(UI_10_FONT_ID, 14, "Checkerboard pattern - press any button", true, EpdFontFamily::BOLD);
   renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  // Dual-buffer displayBuffer() swaps backing buffers; redraw baseline into the new active draw buffer
+  // so subsequent window writes are applied over checkerboard, not over the previous white buffer.
+  fillCheckerboard(renderer, pageWidth, pageHeight, tileSize);
+  renderer.drawCenteredText(UI_10_FONT_ID, 14, "Checkerboard pattern - press any button", true, EpdFontFamily::BOLD);
   xSemaphoreGive(renderingMutex);
   waitForAnyButtonPress(mappedInput);
 
