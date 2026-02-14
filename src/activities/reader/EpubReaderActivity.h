@@ -16,6 +16,7 @@ class EpubReaderActivity final : public ActivityWithSubactivity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   int pagesUntilFullRefresh = 0;
+  bool forceInitialFullRefresh = true;
   int cachedSpineIndex = 0;
   int cachedChapterTotalPageCount = 0;
   // Signals that the next render should reposition within the newly loaded section

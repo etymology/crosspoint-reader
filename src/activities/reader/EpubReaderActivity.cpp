@@ -107,6 +107,9 @@ void EpubReaderActivity::onEnter() {
   APP_STATE.saveToFile();
   RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
 
+  // First page render should hard-sync panel contents after any prior popup/activity frame.
+  forceInitialFullRefresh = true;
+
   // Trigger first update
   updateRequired = true;
 
@@ -674,7 +677,11 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
                                         const int orientedMarginLeft) {
   page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
   renderStatusBar(orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
-  if (pagesUntilFullRefresh <= 1) {
+  if (forceInitialFullRefresh) {
+    renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+    forceInitialFullRefresh = false;
+    pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
+  } else if (pagesUntilFullRefresh <= 1) {
     renderer.displayBuffer(HalDisplay::HALF_REFRESH);
     pagesUntilFullRefresh = SETTINGS.getRefreshFrequency();
   } else {

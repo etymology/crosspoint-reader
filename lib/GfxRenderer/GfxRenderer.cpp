@@ -660,6 +660,44 @@ void GfxRenderer::displayBuffer(const HalDisplay::RefreshMode refreshMode) const
   display.displayBuffer(refreshMode, fadingFix);
 }
 
+void GfxRenderer::displayWindow(const int x, const int y, const int width, const int height) const {
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  int p1x = 0, p1y = 0;
+  int p2x = 0, p2y = 0;
+  int p3x = 0, p3y = 0;
+  int p4x = 0, p4y = 0;
+  rotateCoordinates(orientation, x, y, &p1x, &p1y);
+  rotateCoordinates(orientation, x + width - 1, y, &p2x, &p2y);
+  rotateCoordinates(orientation, x, y + height - 1, &p3x, &p3y);
+  rotateCoordinates(orientation, x + width - 1, y + height - 1, &p4x, &p4y);
+
+  int minX = std::min({p1x, p2x, p3x, p4x});
+  int maxX = std::max({p1x, p2x, p3x, p4x});
+  int minY = std::min({p1y, p2y, p3y, p4y});
+  int maxY = std::max({p1y, p2y, p3y, p4y});
+
+  minX = std::max(0, minX);
+  minY = std::max(0, minY);
+  maxX = std::min(static_cast<int>(HalDisplay::DISPLAY_WIDTH) - 1, maxX);
+  maxY = std::min(static_cast<int>(HalDisplay::DISPLAY_HEIGHT) - 1, maxY);
+
+  if (maxX < minX || maxY < minY) {
+    return;
+  }
+
+  // displayWindow requires byte-aligned X/width.
+  const uint16_t alignedX = static_cast<uint16_t>(minX & ~0x7);
+  const uint16_t endExclusive = static_cast<uint16_t>(maxX + 1);
+  const uint16_t alignedEnd = static_cast<uint16_t>((endExclusive + 7) & ~0x7);
+  const uint16_t alignedWidth = alignedEnd - alignedX;
+
+  display.displayWindow(alignedX, static_cast<uint16_t>(minY), alignedWidth,
+                        static_cast<uint16_t>(maxY - minY + 1), fadingFix);
+}
+
 std::string GfxRenderer::truncatedText(const int fontId, const char* text, const int maxWidth,
                                        const EpdFontFamily::Style style) const {
   if (!text || maxWidth <= 0) return "";
